@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>¡Español Studio! — AI Spanish Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== LOGIN ===== -->
+<div id="login-page">
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="login-logo">¡<span>Español</span> Studio!</div>
+      <div class="login-sub">Your personal AI Spanish coach 🇪🇸</div>
+      <input class="login-input" id="login-pw" type="password" placeholder="Enter your password"
+             onkeydown="if(event.key==='Enter') tryLogin()"/>
+      <button class="login-btn" onclick="tryLogin()">Enter →</button>
+      <div class="login-err" id="login-err">❌ Wrong password — try again!</div>
+      <div class="login-hint">Ask a parent if you've forgotten your password.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== APP (hidden until login) ===== -->
+<div id="app" style="display:none;">
+
+  <div class="header">
+    <div class="logo">¡<span>Español</span> Studio!</div>
+    <div class="hchips">
+      <div class="hchip">🔥 <b id="h-streak">0</b></div>
+      <div class="hchip">⭐ <b id="h-xp">0</b> XP</div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="hbtn" onclick="goPage('setup')">⚙ Topics</button>
+      <button class="hbtn" onclick="goPage('plan')">📋 Plan</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- SETUP PAGE -->
+    <div class="page active" id="page-setup">
+      <div class="setup-hero">
+        <h1>¡Bienvenida! 👋</h1>
+        <p>Set up your personalized plan. The AI learns what you struggle with and focuses your practice there.</p>
+      </div>
+
+      <div class="setup-section">
+        <h3>What's your name?</h3>
+        <p>I'll use this to cheer you on every day!</p>
+        <input class="name-input" id="setup-name" type="text" placeholder="Your first name…" maxlength="24"/>
+      </div>
+
+      <div class="setup-section">
+        <h3>Which topics are you studying in class?</h3>
+        <p>Select all that apply — the AI will prioritize these and expand your vocabulary in those areas.</p>
+        <div class="topic-grid" id="topic-grid">
+          <div class="topic-chip sel" data-topic="School"><span class="ticon">🏫</span>School</div>
+          <div class="topic-chip sel" data-topic="Family"><span class="ticon">👨‍👩‍👧</span>Family</div>
+          <div class="topic-chip sel" data-topic="Food"><span class="ticon">🍽️</span>Food</div>
+          <div class="topic-chip" data-topic="Travel"><span class="ticon">✈️</span>Travel</div>
+          <div class="topic-chip" data-topic="Hobbies"><span class="ticon">🎨</span>Hobbies</div>
+          <div class="topic-chip" data-topic="Weather"><span class="ticon">☀️</span>Weather</div>
+          <div class="topic-chip sel" data-topic="Time"><span class="ticon">⏰</span>Time</div>
+          <div class="topic-chip sel" data-topic="Adjectives"><span class="ticon">💬</span>Adjectives</div>
+          <div class="topic-chip sel" data-topic="Phrases"><span class="ticon">🗣️</span>Phrases</div>
+          <div class="topic-chip" data-topic="Body"><span class="ticon">🧍</span>Body</div>
+          <div class="topic-chip" data-topic="Home"><span class="ticon">🏠</span>Home</div>
+          <div class="topic-chip" data-topic="Shopping"><span class="ticon">🛍️</span>Shopping</div>
+        </div>
+      </div>
+
+      <div class="setup-section">
+        <h3>Add your own vocabulary words</h3>
+        <p>Enter words from class — the AI will automatically find related words and expand the topic!</p>
+        <p style="margin-bottom:8px;color:var(--muted);font-size:13px;">Format: <em>spanish = english</em>, one per line</p>
+        <textarea class="vocab-input-field" id="custom-vocab-input" rows="4"
+          placeholder="e.g.&#10;la camisa = the shirt&#10;los zapatos = the shoes&#10;¿Qué hora es? = What time is it?"></textarea>
+        <div class="accent-bar" id="setup-accent-bar"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+          <button class="btn primary" onclick="parseCustomVocab()" style="font-size:13px;">+ Add Words</button>
+          <button class="ai-expand-btn" id="expand-btn" onclick="aiExpandVocab()">
+            <span>✨</span> AI: Expand These Topics
+          </button>
+        </div>
+        <div class="ai-status" id="ai-expand-status"></div>
+        <div class="vocab-tag-wrap" id="vocab-tags"></div>
+      </div>
+
+      <div class="setup-section">
+        <h3>How much time can you study each day?</h3>
+        <p>Be realistic — 15 minutes every day beats 1 hour once a week!</p>
+        <div class="time-opts">
+          <div class="time-opt" data-mins="10"><div class="mins">10</div><div class="lbl">min · Quick</div></div>
+          <div class="time-opt sel" data-mins="20"><div class="mins">20</div><div class="lbl">min · Recommended ⭐</div></div>
+          <div class="time-opt" data-mins="30"><div class="mins">30</div><div class="lbl">min · Power</div></div>
+          <div class="time-opt" data-mins="45"><div class="mins">45</div><div class="lbl">min · Deep dive</div></div>
+        </div>
+      </div>
+
+      <button class="start-btn" onclick="startApp()">Build My AI Plan →</button>
+    </div>
+
+    <!-- DAILY PLAN PAGE -->
+    <div class="page" id="page-plan">
+      <div class="greeting-card">
+        <div class="greeting-name" id="plan-greeting">¡Hola!</div>
+        <div class="greeting-sub" id="plan-sub">Loading your plan…</div>
+        <div class="dprog-bar"><div class="dprog-fill" id="dprog-fill" style="width:0%"></div></div>
+        <div class="dprog-lbl" id="dprog-lbl">0 of 0 complete</div>
+      </div>
+
+      <div class="weakness-card" id="weakness-card" style="display:none;">
+        <div class="weakness-title">🎯 AI Focus Areas</div>
+        <div class="weakness-text" id="weakness-text"></div>
+        <div class="weakness-areas" id="weakness-chips"></div>
+      </div>
+
+      <div class="encourage-banner">
+        <div class="quote" id="enc-quote">Loading…</div>
+        <div class="attr" id="enc-attr"></div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-tile"><div class="stat-num" id="s-streak">0</div><div class="stat-lbl">Streak 🔥</div></div>
+        <div class="stat-tile"><div class="stat-num" id="s-xp">0</div><div class="stat-lbl">XP ⭐</div></div>
+        <div class="stat-tile"><div class="stat-num" id="s-score">—</div><div class="stat-lbl">Quiz 🎯</div></div>
+        <div class="stat-tile"><div class="stat-num" id="s-learned">0</div><div class="stat-lbl">Learned 📚</div></div>
+      </div>
+
+      <div class="plan-grid" id="plan-grid"></div>
+
+      <div class="card" style="text-align:center;padding:1rem;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:7px;">Need to update topics or add vocabulary?</div>
+        <button class="btn" onclick="goPage('setup')">⚙ Update Topics & Vocabulary</button>
+      </div>
+    </div>
+
+    <!-- ACTIVITY PAGE -->
+    <div class="page" id="page-activity">
+      <div class="act-header">
+        <button class="back-btn" onclick="goBack()">← Back</button>
+        <div class="act-title-wrap">
+          <h2 id="act-title">Activity</h2>
+          <p id="act-sub"></p>
+        </div>
+      </div>
+
+      <div class="timer-bar">
+        <div class="timer-disp" id="timer-disp">0:00</div>
+        <div class="timer-track"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+        <div style="font-size:12px;color:var(--muted);" id="timer-lbl"></div>
+        <button class="done-act-btn" onclick="finishActivity()">✓ Done</button>
+      </div>
+
+      <!-- AI Feedback Panel -->
+      <div class="ai-feedback" id="ai-panel">
+        <div class="ai-feedback-label">✨ AI Coach</div>
+        <div class="ai-feedback-text" id="ai-panel-text">
+          <div class="ai-thinking"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>
+        </div>
+      </div>
+
+      <!-- FLASHCARDS -->
+      <div id="act-flashcards" style="display:none;">
+        <div class="cat-filter" id="fc-cat-filter"></div>
+        <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog" style="width:0%"></div></div>
+        <div class="fc-counter" id="fc-counter">Card 1</div>
+        <div class="flashcard-scene">
+          <div class="flashcard" id="flashcard" onclick="flipCard()">
+            <div class="fc-face fc-front">
+              <div class="fc-tag" id="fc-cat">Category</div>
+              <div class="fc-word" id="fc-es">—</div>
+              <div class="fc-pron" id="fc-pron"></div>
+              <div class="fc-hint">tap to reveal →</div>
+            </div>
+            <div class="fc-face fc-back">
+              <div class="fc-tag" id="fc-cat2"></div>
+              <div class="fc-translation" id="fc-en">—</div>
+              <div class="fc-example" id="fc-ex"></div>
+            </div>
+          </div>
+        </div>
+        <div class="fc-controls">
+          <button class="btn audio" onclick="speakCurrent()">🔊</button>
+          <button class="btn danger" onclick="rateCard('hard')" style="flex:1">😰 Hard</button>
+          <button class="btn" onclick="rateCard('ok')" style="flex:1">😐 OK</button>
+          <button class="btn success" onclick="rateCard('easy')" style="flex:1">😊 Easy</button>
+        </div>
+        <div id="fc-fb"></div>
+      </div>
+
+      <!-- QUIZ -->
+      <div id="act-quiz" style="display:none;">
+        <div class="quiz-qcard">
+          <div class="quiz-direction" id="q-dir-label">What does this mean in English?</div>
+          <div class="quiz-word-row">
+            <div class="quiz-word" id="q-word">—</div>
+            <button class="btn audio" onclick="speakQuiz()" style="padding:6px 10px;">🔊</button>
+          </div>
+          <div class="quiz-opts" id="q-opts"></div>
+        </div>
+        <div id="q-fb"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn primary" onclick="loadQuiz()" style="flex:1">Next →</button>
+          <button class="btn gold" onclick="toggleQuizDir()" id="q-toggle">Switch: ES →</button>
+        </div>
+      </div>
+
+      <!-- CONJUGATION -->
+      <div id="act-conjugation" style="display:none;">
+        <div class="tense-tabs" id="tense-tabs"></div>
+        <div class="verb-display">
+          <div><span class="verb-title" id="v-inf">—</span><span class="verb-type" id="v-type">—</span></div>
+          <div class="verb-meaning" id="v-en">—</div>
+          <div class="conj-grid" id="conj-grid"></div>
+        </div>
+        <div class="inline-accent-bar" id="conj-accent-bar" style="margin-bottom:10px;"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn primary" onclick="checkConj()" style="flex:1">✓ Check</button>
+          <button class="btn" onclick="loadVerb()" style="flex:1">Next Verb →</button>
+          <button class="btn audio" onclick="speakVerb()">🔊</button>
+        </div>
+        <div id="conj-fb"></div>
+      </div>
+
+      <!-- LISTEN -->
+      <div id="act-listen" style="display:none;">
+        <div class="card">
+          <div style="font-size:13px;color:var(--muted);margin-bottom:9px;">Listen to the audio, then answer in English.</div>
+          <div class="listen-controls">
+            <button class="btn primary" onclick="playListen()">▶ Play</button>
+            <button class="btn audio" onclick="playListen(0.65)">🐢 Slow</button>
+            <div class="speed-wrap">Speed:
+              <input type="range" id="spd" min="0.5" max="1.5" step="0.1" value="1"
+                     oninput="document.getElementById('spd-val').textContent=this.value+'x'">
+              <span id="spd-val">1x</span>
+            </div>
+          </div>
+          <div id="listen-q" style="font-size:15px;font-weight:500;color:var(--text);margin-bottom:9px;"></div>
+          <input class="listen-answer" id="listen-ans" type="text" placeholder="Type your answer in English…"/>
+          <div style="display:flex;gap:8px;margin-top:9px;">
+            <button class="btn primary" onclick="checkListen()" style="flex:1">Check</button>
+            <button class="btn" onclick="loadListen()" style="flex:1">Next →</button>
+          </div>
+          <div id="listen-fb"></div>
+          <div class="listen-transcript" id="listen-trans"></div>
+        </div>
+      </div>
+
+      <!-- SPEAK -->
+      <div id="act-speak" style="display:none;">
+        <div class="speak-card">
+          <div style="font-size:12px;color:var(--muted);">Say this in Spanish:</div>
+          <div class="speak-prompt" id="speak-en">—</div>
+          <div class="speak-hint" id="speak-hint">—</div>
+          <div class="mic-wrap">
+            <div class="mic-btn" id="mic-btn" onclick="toggleRecording()">🎤</div>
+            <div class="rec-status" id="rec-status">Tap mic to start</div>
+          </div>
+          <div class="speak-result" id="speak-result">Your speech will appear here…</div>
+          <div id="speak-fb"></div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn audio" onclick="hearAnswer()">🔊 Hear answer</button>
+          <button class="btn" onclick="loadSpeak()" style="flex:1">Next →</button>
+        </div>
+        <div class="notice">🎙 Speaking uses browser speech recognition. Works best in Chrome or Edge.</div>
+      </div>
+
+    </div><!-- /page-activity -->
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- POPUP -->
+<div class="popup-overlay" id="popup">
+  <div class="popup-box">
+    <span class="popup-emoji" id="popup-emoji">🎉</span>
+    <div class="popup-title" id="popup-title">¡Excelente!</div>
+    <div class="popup-msg" id="popup-msg"></div>
+    <button class="popup-btn" onclick="closePopup()">Keep Going! →</button>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
