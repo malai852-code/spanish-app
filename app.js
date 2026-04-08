@@ -1,15 +1,10 @@
 // ============================================================
-// app.js — Español Studio main application logic
+// app.js — Español Studio
 //
-// SETUP REQUIRED:
-//   1. Deploy the Cloudflare Worker (see /worker/README.md)
-//   2. Replace WORKER_URL below with your worker's URL
-//      e.g. 'https://espanol-studio-api.yourname.workers.dev'
+// SETUP: Replace WORKER_URL with your Cloudflare Worker URL
 // ============================================================
 
 const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
-
-// Password — change this to whatever you want
 const APP_PASSWORD = 'espanol123';
 
 // ============================================================
@@ -83,14 +78,26 @@ let xp = 0, streak = 1, quizCorrect = 0, quizTotal = 0, learnedSet = new Set();
 let fcIdx = 0, fcCat = 'All', fcFlipped = false;
 let quizReverse = false, currentQuizItem = null;
 let verbIdx = 0, tense = 'pres';
-let listenIdx = 0, speakIdx = 0;
 let recognition = null, isRecording = false;
 let currentActivity = null;
 let timerInterval = null, timerSeconds = 0, timerMax = 0;
 
+// AI content queues — pre-fetched batches so there's no wait between questions
+let aiQuizQueue   = [];  // [{type, question, correct, distractors, vocab_es}]
+let aiListenQueue = [];  // [{es, question, answer, hint}]
+let aiSpeakQueue  = [];  // [{en, es, hint}]
+let currentListenItem = null;
+let currentSpeakItem  = null;
+
+// Prevent duplicate in-flight fetches
+let fetchingQuiz   = false;
+let fetchingListen = false;
+let fetchingSpeak  = false;
+
+// Performance tracking
 let perfData = {
-  vocab: {},   // category -> {correct, total}
-  verbs: {},   // verbInf  -> {correct, total}
+  vocab:  {},  // category -> {correct, total}
+  verbs:  {},  // verbInf  -> {correct, total}
   listen: { correct: 0, total: 0 },
   speak:  { correct: 0, total: 0 },
 };
@@ -102,24 +109,23 @@ const TENSE_LBL = { pres: 'Present', pret: 'Preterite (past)', fut: 'Future' };
 
 const ACTIVITY_DEFS = [
   { id: 'flashcards',  label: 'Vocabulary Flashcards',   icon: '🃏', desc: 'Build your word bank — tap to flip!' },
-  { id: 'quiz',        label: 'Multiple Choice Quiz',    icon: '✏️', desc: 'Test yourself in both directions'   },
-  { id: 'conjugation', label: 'Verb Conjugation Drill',  icon: '🔄', desc: 'Fill in the forms — key to fluency' },
-  { id: 'listen',      label: 'Listening Comprehension', icon: '👂', desc: 'Train your ear with native-speed audio' },
-  { id: 'speak',       label: 'Speaking Practice',       icon: '🎤', desc: 'Say it out loud — pronunciation matters!' },
+  { id: 'quiz',        label: 'Multiple Choice Quiz',    icon: '✏️', desc: 'AI-generated questions from your vocab' },
+  { id: 'conjugation', label: 'Verb Conjugation Drill',  icon: '🔄', desc: 'Fill in all six forms — key to fluency' },
+  { id: 'listen',      label: 'Listening Comprehension', icon: '👂', desc: 'AI-generated phrases targeting your weak spots' },
+  { id: 'speak',       label: 'Speaking Practice',       icon: '🎤', desc: 'AI-generated sentences to say aloud' },
 ];
 
 // ============================================================
-// PERSIST TO LOCALSTORAGE
+// PERSIST STATE
 // ============================================================
 function saveState() {
   try {
     localStorage.setItem('espanol_v3', JSON.stringify({
       userName, dailyMinutes, selectedTopics, customWords,
       xp, streak, quizCorrect, quizTotal,
-      learnedSet: [...learnedSet],
-      perfData,
+      learnedSet: [...learnedSet], perfData,
     }));
-  } catch (e) { /* quota exceeded or private mode */ }
+  } catch (e) {}
 }
 
 function loadSavedState() {
@@ -153,7 +159,7 @@ function loadSavedState() {
       renderPlan();
       goPage('plan');
     }
-  } catch (e) { /* corrupt storage — start fresh */ }
+  } catch (e) {}
 }
 
 // ============================================================
@@ -169,7 +175,8 @@ function getWeaknesses() {
     }
   });
   Object.entries(perfData.verbs).forEach(([verb, d]) => {
-    if (d.total >= 2 && d.correct / d.total < 0.5) weak.push({ label: verb, rate: d.correct / d.total });
+    if (d.total >= 2 && d.correct / d.total < 0.5)
+      weak.push({ label: verb, rate: d.correct / d.total });
   });
   if (perfData.listen.total >= 3 && perfData.listen.correct / perfData.listen.total < 0.55)
     weak.push({ label: 'Listening', rate: perfData.listen.correct / perfData.listen.total });
@@ -193,8 +200,8 @@ function recordVerbPerf(inf, correct) {
   saveState();
 }
 
-function recordListenPerf(correct) { perfData.listen.total++; if (correct) perfData.listen.correct++; saveState(); }
-function recordSpeakPerf(correct)  { perfData.speak.total++;  if (correct) perfData.speak.correct++;  saveState(); }
+function recordListenPerf(c) { perfData.listen.total++; if (c) perfData.listen.correct++; saveState(); }
+function recordSpeakPerf(c)  { perfData.speak.total++;  if (c) perfData.speak.correct++;  saveState(); }
 
 function updateWeaknessUI() {
   const { weak, strong } = getWeaknesses();
@@ -215,7 +222,7 @@ async function workerCall(system, prompt, maxTokens) {
   const resp = await fetch(WORKER_URL + '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ system, prompt, max_tokens: maxTokens || 400 }),
+    body: JSON.stringify({ system, prompt, max_tokens: maxTokens || 600 }),
   });
   if (!resp.ok) throw new Error('Worker error ' + resp.status);
   const data = await resp.json();
@@ -223,6 +230,111 @@ async function workerCall(system, prompt, maxTokens) {
   return data.text || '';
 }
 
+function parseJSON(text) {
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
+}
+
+// Build a context string describing the student's current state for AI prompts
+function buildContext() {
+  const { weak } = getWeaknesses();
+  const vocabSample = activeVocab.slice(0, 30).map(v => v.es + ' = ' + v.en).join(', ');
+  const weakStr = weak.length
+    ? 'Student weak areas: ' + weak.map(w => w.label).join(', ') + '.'
+    : 'No weak areas identified yet.';
+  return 'Topics: ' + selectedTopics.join(', ') + '. ' + weakStr + ' Vocabulary in rotation: ' + vocabSample + '.';
+}
+
+// ---- Fetch a batch of AI quiz questions ----
+async function fetchAIQuizBatch() {
+  if (fetchingQuiz || activeVocab.length < 4) return;
+  fetchingQuiz = true;
+
+  const { weak } = getWeaknesses();
+  const weakCats = weak.map(w => w.label);
+  let pool = activeVocab;
+  if (weakCats.length) {
+    const wp = activeVocab.filter(v => weakCats.includes(v.cat));
+    if (wp.length >= 4) pool = wp;
+  }
+  const sample = pool.slice(0, 20).map(v => v.es + ' = ' + v.en).join('\n');
+
+  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with valid JSON array. No markdown, no explanation, no code fences.';
+  const prompt = buildContext() +
+    '\n\nGenerate 5 multiple-choice Spanish quiz questions using ONLY vocabulary from this list:\n' + sample +
+    '\n\nMix these question types:\n' +
+    '- "translate_es": show a Spanish word, student picks the English meaning\n' +
+    '- "translate_en": show an English word, student picks the Spanish translation\n' +
+    '- "fill_blank": show a Spanish sentence with one word replaced by ___, student picks the missing word\n' +
+    '\nReturn a JSON array of exactly 5 objects with these fields:\n' +
+    '{"type":"translate_es","question":"la tarea","correct":"homework","distractors":["teacher","library","pencil"],"vocab_es":"la tarea"}\n' +
+    'Distractors must be plausible but wrong. Use only words from the list above.';
+
+  try {
+    const text = await workerCall(system, prompt, 1000);
+    const items = parseJSON(text);
+    if (Array.isArray(items)) {
+      aiQuizQueue.push(...items.filter(q => q.question && q.correct && Array.isArray(q.distractors)));
+    }
+  } catch (e) {
+    console.warn('AI quiz fetch failed:', e.message);
+  }
+  fetchingQuiz = false;
+}
+
+// ---- Fetch a batch of AI listening phrases ----
+async function fetchAIListenBatch() {
+  if (fetchingListen) return;
+  fetchingListen = true;
+
+  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with valid JSON array. No markdown, no explanation, no code fences.';
+  const prompt = buildContext() +
+    '\n\nGenerate 4 listening comprehension exercises for an 8th grade Spanish student. ' +
+    'Each should be a natural Spanish sentence the student needs to listen to and understand. ' +
+    'Focus heavily on weak areas if listed. Vary difficulty — some simple, some slightly complex with connectors like "pero", "porque", "antes de".' +
+    '\n\nReturn a JSON array of exactly 4 objects:\n' +
+    '{"es":"Tengo que hacer mi tarea antes de cenar.","question":"What must the speaker do before dinner?","answer":"homework","hint":"tarea = homework, antes de = before"}';
+
+  try {
+    const text = await workerCall(system, prompt, 900);
+    const items = parseJSON(text);
+    if (Array.isArray(items)) {
+      aiListenQueue.push(...items.filter(i => i.es && i.question && i.answer));
+    }
+  } catch (e) {
+    console.warn('AI listen fetch failed:', e.message);
+    aiListenQueue.push(...LISTENING_BANK.slice(0, 4));
+  }
+  fetchingListen = false;
+}
+
+// ---- Fetch a batch of AI speaking phrases ----
+async function fetchAISpeakBatch() {
+  if (fetchingSpeak) return;
+  fetchingSpeak = true;
+
+  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with valid JSON array. No markdown, no explanation, no code fences.';
+  const prompt = buildContext() +
+    '\n\nGenerate 4 speaking practice sentences for an 8th grade Spanish student. ' +
+    'Show the student an English sentence to translate and say aloud in Spanish. ' +
+    'Use vocabulary relevant to their topics and weak areas. ' +
+    'Sentences should be 6-12 words in Spanish — natural and at 8th grade level.' +
+    '\n\nReturn a JSON array of exactly 4 objects:\n' +
+    '{"en":"I have to do my homework before dinner.","es":"Tengo que hacer mi tarea antes de cenar.","hint":"tengo que... antes de..."}';
+
+  try {
+    const text = await workerCall(system, prompt, 900);
+    const items = parseJSON(text);
+    if (Array.isArray(items)) {
+      aiSpeakQueue.push(...items.filter(i => i.en && i.es));
+    }
+  } catch (e) {
+    console.warn('AI speak fetch failed:', e.message);
+    aiSpeakQueue.push(...SPEAKING_BANK.slice(0, 4));
+  }
+  fetchingSpeak = false;
+}
+
+// ---- Coaching AI calls ----
 async function aiExpandVocab() {
   if (!customWords.length) {
     document.getElementById('ai-expand-status').textContent = 'Add some words first, then I can expand on them!';
@@ -234,13 +346,13 @@ async function aiExpandVocab() {
   document.getElementById('ai-expand-status').textContent = 'AI is finding related vocabulary…';
 
   const sample = customWords.slice(0, 10).map(w => w.es + ' = ' + w.en).join('\n');
-  const system = 'You are a Spanish teacher for 8th grade students. Respond ONLY with valid JSON. No explanation, no markdown, no code fences.';
+  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with valid JSON array. No markdown, no code fences.';
   const prompt = 'A student entered these Spanish words:\n' + sample +
-    '\n\nIdentify the theme (e.g. "clothing") and generate 8 RELATED words they have NOT entered. Return a JSON array only:\n' +
-    '[{"es":"la camisa","en":"shirt","cat":"Clothing","pron":"lah kah-MEE-sah","ex":"La camisa es azul."},...]';
+    '\n\nIdentify the theme and generate 8 RELATED words they have NOT entered. Return JSON array:\n' +
+    '[{"es":"la camisa","en":"shirt","cat":"Clothing","pron":"lah kah-MEE-sah","ex":"La camisa es azul."}]';
   try {
     const text = await workerCall(system, prompt, 900);
-    const words = JSON.parse(text.replace(/```json|```/g, '').trim());
+    const words = parseJSON(text);
     if (Array.isArray(words)) {
       const added = words.filter(w => w.es && w.en);
       customWords.push(...added);
@@ -249,7 +361,7 @@ async function aiExpandVocab() {
       saveState();
     }
   } catch (e) {
-    document.getElementById('ai-expand-status').textContent = 'Could not reach AI. Is the Worker URL set correctly?';
+    document.getElementById('ai-expand-status').textContent = 'Could not reach AI. Check your Worker URL.';
   }
   btn.classList.remove('loading');
   btn.innerHTML = '<span>✨</span> AI: Expand These Topics';
@@ -260,10 +372,12 @@ async function aiEncouragement(activityName, score, weaknesses) {
   const panelText = document.getElementById('ai-panel-text');
   panel.style.display = 'block';
   panelText.innerHTML = '<div class="ai-thinking"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  const weakStr = weaknesses.length ? 'Weak areas: ' + weaknesses.map(w => w.label).join(', ') + '.' : 'No major weak areas yet.';
-  const system = 'You are an encouraging Spanish tutor for a middle school student. Be warm, brief (2-3 sentences), positive, and specific. Plain text only — no lists, no markdown.';
+  const weakStr = weaknesses.length
+    ? 'Weak areas: ' + weaknesses.map(w => w.label).join(', ') + '.'
+    : 'No major weak areas yet.';
+  const system = 'You are an encouraging Spanish tutor for a middle school student. Be warm, brief (2-3 sentences max), positive and specific. Plain text only — no lists, no markdown.';
   const prompt = userName + ' just completed ' + activityName + ' with result: ' + score + '. ' + weakStr +
-    ' Give specific, personalized encouragement and one quick tip. Address them by name.';
+    ' Give specific personalized encouragement and one quick tip. Address them by name.';
   try {
     panelText.textContent = await workerCall(system, prompt, 200);
   } catch (e) {
@@ -276,8 +390,8 @@ async function aiHint(spanishWord, correctAnswer, studentAnswer) {
   const panelText = document.getElementById('ai-panel-text');
   panel.style.display = 'block';
   panelText.innerHTML = '<div class="ai-thinking"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  const system = 'You are a friendly Spanish tutor for a middle school student. Give a very short memory tip (1-2 sentences, plain text). Be encouraging and specific.';
-  const prompt = 'Student confused "' + spanishWord + '" (correct: "' + correctAnswer + '") with "' + studentAnswer + '". Give a quick mnemonic or memory trick.';
+  const system = 'You are a friendly Spanish tutor for a middle school student. Give a very short memory tip (1-2 sentences, plain text only). Be encouraging.';
+  const prompt = 'Student confused "' + spanishWord + '" (correct answer: "' + correctAnswer + '") with "' + studentAnswer + '". Give a quick mnemonic or memory trick to remember the right answer.';
   try {
     panelText.textContent = await workerCall(system, prompt, 150);
   } catch (e) {
@@ -332,7 +446,9 @@ function startApp() {
 
 function buildActiveVocab() {
   activeVocab = [];
-  selectedTopics.forEach(t => { if (ALL_VOCAB[t]) activeVocab.push(...ALL_VOCAB[t].map(w => ({ ...w, cat: t }))); });
+  selectedTopics.forEach(t => {
+    if (ALL_VOCAB[t]) activeVocab.push(...ALL_VOCAB[t].map(w => ({ ...w, cat: t })));
+  });
   activeVocab.push(...customWords);
 }
 
@@ -367,7 +483,7 @@ function renderPlan() {
     hour < 17 ? '¡Buenas tardes, ' + userName + '! ☀️' :
                 '¡Buenas noches, ' + userName + '! 🌙';
   document.getElementById('plan-sub').textContent =
-    dailyMinutes + '-min plan · ' + selectedTopics.length + ' topics · ' + activeVocab.length + ' words';
+    dailyMinutes + '-min plan · ' + selectedTopics.length + ' topics · ' + activeVocab.length + ' words · AI-powered ✨';
 
   const enc = ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)];
   document.getElementById('enc-quote').textContent = enc.q;
@@ -376,6 +492,11 @@ function renderPlan() {
   updateWeaknessUI();
   renderPlanGrid();
   updateStats();
+
+  // Pre-fetch AI content in the background while student reads the plan
+  fetchAIQuizBatch();
+  fetchAIListenBatch();
+  fetchAISpeakBatch();
 }
 
 function renderPlanGrid() {
@@ -440,11 +561,11 @@ function startActivity(id) {
   document.getElementById('act-' + id).style.display = 'block';
   startTimer(act.mins * 60);
 
-  if      (id === 'flashcards')   { buildFCCatFilter(); loadCard(); }
-  else if (id === 'quiz')         { quizReverse = false; loadQuiz(); }
-  else if (id === 'conjugation')  { buildTenseTabs(); buildConjAccentBar(); loadVerb(); }
-  else if (id === 'listen')       { loadListen(); }
-  else if (id === 'speak')        { loadSpeak(); }
+  if      (id === 'flashcards')  { buildFCCatFilter(); loadCard(); }
+  else if (id === 'quiz')        { quizReverse = false; loadQuiz(); }
+  else if (id === 'conjugation') { buildTenseTabs(); buildConjAccentBar(); loadVerb(); }
+  else if (id === 'listen')      { loadListen(); }
+  else if (id === 'speak')       { loadSpeak(); }
 
   goPage('activity');
 }
@@ -458,10 +579,17 @@ async function finishActivity() {
 
   const { weak } = getWeaknesses();
   const actLabel = planActivities.find(a => a.id === currentActivity)?.label || currentActivity;
-  const score    = (currentActivity === 'quiz' && quizTotal) ? Math.round(quizCorrect / quizTotal * 100) + '%' : 'completed';
+  const score    = (currentActivity === 'quiz' && quizTotal)
+    ? Math.round(quizCorrect / quizTotal * 100) + '%'
+    : 'completed';
 
   if (wasNew) {
     addXP(50);
+    // Refill AI queues in background
+    if (currentActivity === 'quiz')   fetchAIQuizBatch();
+    if (currentActivity === 'listen') fetchAIListenBatch();
+    if (currentActivity === 'speak')  fetchAISpeakBatch();
+
     await aiEncouragement(actLabel, score, weak);
     if (planActivities.every(a => completedActivities.has(a.id))) {
       showPopup('🏆', '¡Lo lograste!',
@@ -490,7 +618,7 @@ function startTimer(seconds) {
 function updateTimerUI() {
   const m = Math.floor(timerSeconds / 60), s = timerSeconds % 60;
   document.getElementById('timer-disp').textContent = m + ':' + (s < 10 ? '0' : '') + s;
-  const pct = timerMax ? Math.round(timerSeconds / timerMax * 100) : 0;
+  const pct  = timerMax ? Math.round(timerSeconds / timerMax * 100) : 0;
   const fill = document.getElementById('timer-fill');
   fill.style.width      = pct + '%';
   fill.style.background = pct > 40 ? 'var(--green)' : pct > 15 ? 'var(--gold)' : 'var(--orange)';
@@ -540,6 +668,13 @@ function normalize(s) {
     .replace(/[^a-z0-9 ]/g, '').trim();
 }
 
+function showLoadingInEl(el) {
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;padding:1rem 0;color:var(--muted);font-size:13px;">' +
+    '<div class="ai-thinking"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>' +
+    'AI is generating your question…</div>';
+}
+
 // ============================================================
 // FLASHCARDS
 // ============================================================
@@ -572,8 +707,8 @@ function loadCard() {
   document.getElementById('fc-en').textContent   = item.en;
   document.getElementById('fc-ex').textContent   = item.ex || '';
   const n = fcIdx % list.length + 1;
-  document.getElementById('fc-counter').textContent        = 'Card ' + n + ' of ' + list.length;
-  document.getElementById('fc-prog').style.width           = Math.round(n / list.length * 100) + '%';
+  document.getElementById('fc-counter').textContent = 'Card ' + n + ' of ' + list.length;
+  document.getElementById('fc-prog').style.width    = Math.round(n / list.length * 100) + '%';
   if (fcFlipped) { document.getElementById('flashcard').classList.remove('flipped'); fcFlipped = false; }
   document.getElementById('flashcard')._item = item;
 }
@@ -597,60 +732,123 @@ function rateCard(rating) {
 }
 
 // ============================================================
-// QUIZ
+// QUIZ — AI-generated with static fallback
 // ============================================================
-function loadQuiz() {
+async function loadQuiz() {
   document.getElementById('q-fb').innerHTML = '';
   document.getElementById('ai-panel').style.display = 'none';
-  if (activeVocab.length < 4) {
-    document.getElementById('q-opts').innerHTML = '<p style="color:var(--muted)">Add more vocabulary in Topics to unlock quizzes (need at least 4 words).</p>';
+
+  if (aiQuizQueue.length === 0) {
+    // Show loading state while we fetch
+    document.getElementById('q-word').textContent      = '…';
+    document.getElementById('q-dir-label').textContent = 'Loading AI question…';
+    showLoadingInEl(document.getElementById('q-opts'));
+    await fetchAIQuizBatch();
+  }
+
+  // Refill in background when running low
+  if (aiQuizQueue.length <= 2) fetchAIQuizBatch();
+
+  if (aiQuizQueue.length === 0) {
+    // Fallback to static vocab question
+    loadQuizFallback();
     return;
   }
-  const { weak } = getWeaknesses();
-  const weakCats = weak.map(w => w.label);
-  let pool = activeVocab;
-  if (weakCats.length && Math.random() < 0.6) {
-    const wp = activeVocab.filter(v => weakCats.includes(v.cat));
-    if (wp.length >= 4) pool = wp;
-  }
-  const item    = pool[Math.floor(Math.random() * pool.length)];
-  currentQuizItem = item;
-  const question = quizReverse ? item.en : item.es;
-  const correct  = quizReverse ? item.es : item.en;
-  document.getElementById('q-word').textContent     = question;
-  document.getElementById('q-dir-label').textContent = quizReverse ? 'How do you say this in Spanish?' : 'What does this mean in English?';
-  const wrongs = activeVocab.filter(v => v !== item).sort(() => Math.random() - 0.5).slice(0, 3);
-  const opts   = [item, ...wrongs].sort(() => Math.random() - 0.5);
-  document.getElementById('q-opts').innerHTML = opts.map(o => {
-    const lbl = quizReverse ? o.es : o.en;
-    return '<button class="quiz-opt" onclick="answerQuiz(this,\'' + lbl.replace(/'/g, "\\'") + '\',\'' + correct.replace(/'/g, "\\'") + '\')">' + lbl + '</button>';
-  }).join('');
+
+  const q = aiQuizQueue.shift();
+  currentQuizItem = { es: q.vocab_es || q.question, cat: 'AI' };
+
+  const dirLabel = {
+    translate_es: 'What does this mean in English?',
+    translate_en: 'How do you say this in Spanish?',
+    fill_blank:   'Fill in the blank:',
+  }[q.type] || 'Translate:';
+
+  document.getElementById('q-dir-label').textContent = dirLabel;
+  document.getElementById('q-word').textContent      = q.question;
+
+  const opts = [q.correct, ...q.distractors].sort(() => Math.random() - 0.5);
+
+  // Use data attributes to avoid quote-escaping issues in onclick
+  const optsHTML = opts.map((o, i) =>
+    '<button class="quiz-opt" data-idx="' + i + '">' + o + '</button>'
+  ).join('');
+  document.getElementById('q-opts').innerHTML = optsHTML;
+
+  // Attach click handlers directly
+  document.querySelectorAll('#q-opts .quiz-opt').forEach(btn => {
+    btn.addEventListener('click', () => answerQuizAI(btn, btn.textContent, q.correct, q.question));
+  });
 }
 
-function answerQuiz(btn, chosen, correct) {
+function answerQuizAI(btn, chosen, correct, questionWord) {
   quizTotal++;
   document.querySelectorAll('.quiz-opt').forEach(o => o.classList.add('disabled'));
   const isCorrect = chosen === correct;
+
+  // Try to find matching vocab for performance tracking
+  const vocabMatch = activeVocab.find(v => v.es === currentQuizItem.es || v.en === currentQuizItem.es);
+  const cat = vocabMatch ? vocabMatch.cat : 'AI';
+
   if (isCorrect) {
     btn.classList.add('correct'); quizCorrect++; addXP(20);
-    recordVocabPerf(currentQuizItem.cat, true);
+    recordVocabPerf(cat, true);
     const praise = ['¡Correcto! 🎉 +20 XP', '¡Muy bien! +20 XP', '¡Perfecto! 🧠 +20 XP', '¡Sí! +20 XP'];
     showFB('q-fb', praise[Math.floor(Math.random() * praise.length)], 'good');
-    if (!quizReverse) speakTTS(currentQuizItem.es); else speakTTS(chosen);
+    // Speak the Spanish side
+    const toSpeak = /[áéíóúñü¿¡]/i.test(correct) ? correct : questionWord;
+    speakTTS(toSpeak);
   } else {
     btn.classList.add('wrong');
     document.querySelectorAll('.quiz-opt').forEach(o => { if (o.textContent === correct) o.classList.add('correct'); });
-    recordVocabPerf(currentQuizItem.cat, false);
-    showFB('q-fb', 'Not quite — answer: <strong>' + correct + '</strong>. You\'ll get it next time! 💪', 'bad');
-    aiHint(quizReverse ? currentQuizItem.en : currentQuizItem.es, correct, chosen);
+    recordVocabPerf(cat, false);
+    showFB('q-fb', 'Not quite — answer: <strong>' + correct + '</strong>. You\'ll get it! 💪', 'bad');
+    aiHint(questionWord, correct, chosen);
   }
   saveState();
   document.getElementById('s-score').textContent = quizTotal ? Math.round(quizCorrect / quizTotal * 100) + '%' : '—';
 }
 
+function loadQuizFallback() {
+  if (activeVocab.length < 4) {
+    document.getElementById('q-opts').innerHTML = '<p style="color:var(--muted)">Add more vocabulary in Topics to unlock quizzes.</p>';
+    return;
+  }
+  const item    = activeVocab[Math.floor(Math.random() * activeVocab.length)];
+  currentQuizItem = item;
+  const question = quizReverse ? item.en : item.es;
+  const correct  = quizReverse ? item.es : item.en;
+  document.getElementById('q-word').textContent      = question;
+  document.getElementById('q-dir-label').textContent = quizReverse ? 'How do you say this in Spanish?' : 'What does this mean in English?';
+  const wrongs = activeVocab.filter(v => v !== item).sort(() => Math.random() - 0.5).slice(0, 3);
+  const opts   = [item, ...wrongs].sort(() => Math.random() - 0.5);
+  const optsHTML = opts.map(o => '<button class="quiz-opt">' + (quizReverse ? o.es : o.en) + '</button>').join('');
+  document.getElementById('q-opts').innerHTML = optsHTML;
+  document.querySelectorAll('#q-opts .quiz-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      quizTotal++;
+      document.querySelectorAll('.quiz-opt').forEach(o => o.classList.add('disabled'));
+      if (btn.textContent === correct) {
+        btn.classList.add('correct'); quizCorrect++; addXP(20);
+        recordVocabPerf(item.cat, true);
+        showFB('q-fb', '¡Correcto! +20 XP 🎉', 'good');
+        speakTTS(item.es);
+      } else {
+        btn.classList.add('wrong');
+        document.querySelectorAll('.quiz-opt').forEach(o => { if (o.textContent === correct) o.classList.add('correct'); });
+        recordVocabPerf(item.cat, false);
+        showFB('q-fb', 'Not quite — answer: <strong>' + correct + '</strong>. 💪', 'bad');
+        aiHint(quizReverse ? item.en : item.es, correct, btn.textContent);
+      }
+      saveState();
+      document.getElementById('s-score').textContent = quizTotal ? Math.round(quizCorrect / quizTotal * 100) + '%' : '—';
+    });
+  });
+}
+
 function speakQuiz() {
   const w = document.getElementById('q-word').textContent;
-  if (!quizReverse) speakTTS(w); else speakTTS(w, 'en-US');
+  speakTTS(w, /[áéíóúñü¿¡]/i.test(w) ? 'es-ES' : 'en-US');
 }
 
 function toggleQuizDir() {
@@ -685,7 +883,6 @@ function loadVerb() {
   document.getElementById('v-type').textContent = v.type;
   document.getElementById('v-en').textContent   = v.en;
   document.getElementById('conj-fb').innerHTML  = '';
-  const ans = v.conj[tense];
   document.getElementById('conj-grid').innerHTML = PRONOUNS.map((p, i) =>
     '<div class="conj-row"><span class="conj-pronoun">' + p + '</span>' +
     '<input class="conj-input" id="ci-' + i + '" placeholder="type here…" autocomplete="off" spellcheck="false"/></div>'
@@ -703,9 +900,9 @@ function checkConj() {
   });
   const pts = correct * 10; addXP(pts);
   recordVerbPerf(v.inf, correct >= 5);
-  if (correct === 6) showFB('conj-fb', '¡Perfecto! All 6 correct! 🏆 +' + pts + ' XP', 'good');
+  if (correct === 6)     showFB('conj-fb', '¡Perfecto! All 6 correct! 🏆 +' + pts + ' XP', 'good');
   else if (correct >= 4) showFB('conj-fb', correct + '/6 — so close! Check highlighted boxes. +' + pts + ' XP', 'info');
-  else showFB('conj-fb', correct + '/6 — keep drilling! Wrong answers shown. +' + pts + ' XP 💪', 'bad');
+  else                   showFB('conj-fb', correct + '/6 — keep drilling! Wrong answers shown. +' + pts + ' XP 💪', 'bad');
 }
 
 function speakVerb() {
@@ -714,49 +911,74 @@ function speakVerb() {
 }
 
 // ============================================================
-// LISTENING
+// LISTENING — AI-generated with static fallback
 // ============================================================
-function loadListen() {
-  listenIdx = Math.floor(Math.random() * LISTENING_BANK.length);
-  const p = LISTENING_BANK[listenIdx];
-  document.getElementById('listen-q').textContent = 'Question: ' + p.q;
-  document.getElementById('listen-ans').value     = '';
-  document.getElementById('listen-fb').innerHTML  = '';
+async function loadListen() {
+  document.getElementById('listen-ans').value    = '';
+  document.getElementById('listen-fb').innerHTML = '';
   document.getElementById('listen-trans').style.display = 'none';
+
+  if (aiListenQueue.length === 0) {
+    document.getElementById('listen-q').textContent = 'Loading AI phrase…';
+    await fetchAIListenBatch();
+  }
+  if (aiListenQueue.length <= 1) fetchAIListenBatch();
+
+  if (aiListenQueue.length === 0) {
+    // Static fallback
+    currentListenItem = LISTENING_BANK[Math.floor(Math.random() * LISTENING_BANK.length)];
+    // Normalise field names
+    currentListenItem = { ...currentListenItem, question: currentListenItem.q, answer: currentListenItem.ans };
+  } else {
+    currentListenItem = aiListenQueue.shift();
+  }
+  document.getElementById('listen-q').textContent = 'Question: ' + currentListenItem.question;
 }
 
 function playListen(override) {
+  if (!currentListenItem) return;
   const rate = override || parseFloat(document.getElementById('spd').value);
-  speakTTS(LISTENING_BANK[listenIdx].es, 'es-ES', rate);
+  speakTTS(currentListenItem.es, 'es-ES', rate);
 }
 
 function checkListen() {
-  const p = LISTENING_BANK[listenIdx];
+  if (!currentListenItem) return;
   const ans     = document.getElementById('listen-ans').value.trim().toLowerCase();
-  const correct = p.ans.toLowerCase();
+  const correct = (currentListenItem.answer || currentListenItem.ans || '').toLowerCase();
   const trans   = document.getElementById('listen-trans');
-  trans.textContent    = 'Phrase: ' + p.es + ' | Hint: ' + p.hint;
-  trans.style.display  = 'block';
+  trans.textContent   = 'Phrase: ' + currentListenItem.es + (currentListenItem.hint ? ' | Hint: ' + currentListenItem.hint : '');
+  trans.style.display = 'block';
   const isCorrect = ans.includes(correct) || (correct.includes(ans) && ans.length > 2);
   recordListenPerf(isCorrect);
   if (isCorrect) { showFB('listen-fb', '¡Correcto! Your ears are getting sharp! 👂 +25 XP', 'good'); addXP(25); }
-  else           { showFB('listen-fb', 'Not quite — expected: "' + p.ans + '". Hint: ' + p.hint + '. Try the slow button!', 'bad'); }
+  else           { showFB('listen-fb', 'Not quite — expected: "' + correct + '". Try the slow button!', 'bad'); }
 }
 
 // ============================================================
-// SPEAKING
+// SPEAKING — AI-generated with static fallback
 // ============================================================
-function loadSpeak() {
-  speakIdx = Math.floor(Math.random() * SPEAKING_BANK.length);
-  const p  = SPEAKING_BANK[speakIdx];
-  document.getElementById('speak-en').textContent     = p.en;
-  document.getElementById('speak-hint').textContent   = 'Hint: ' + p.hint;
+async function loadSpeak() {
   document.getElementById('speak-result').textContent = 'Your speech will appear here…';
   document.getElementById('speak-fb').innerHTML       = '';
   if (isRecording) stopRec();
+
+  if (aiSpeakQueue.length === 0) {
+    document.getElementById('speak-en').textContent   = 'Loading AI phrase…';
+    document.getElementById('speak-hint').textContent = '';
+    await fetchAISpeakBatch();
+  }
+  if (aiSpeakQueue.length <= 1) fetchAISpeakBatch();
+
+  if (aiSpeakQueue.length === 0) {
+    currentSpeakItem = SPEAKING_BANK[Math.floor(Math.random() * SPEAKING_BANK.length)];
+  } else {
+    currentSpeakItem = aiSpeakQueue.shift();
+  }
+  document.getElementById('speak-en').textContent   = currentSpeakItem.en;
+  document.getElementById('speak-hint').textContent = currentSpeakItem.hint ? 'Hint: ' + currentSpeakItem.hint : '';
 }
 
-function hearAnswer() { speakTTS(SPEAKING_BANK[speakIdx].es); }
+function hearAnswer() { if (currentSpeakItem) speakTTS(currentSpeakItem.es); }
 function toggleRecording() { if (isRecording) stopRec(); else startRec(); }
 
 function startRec() {
@@ -783,12 +1005,12 @@ function stopRec() {
 }
 
 function evalSpeech(heard) {
-  const p    = SPEAKING_BANK[speakIdx];
-  const expW = normalize(p.es).split(' ');
+  if (!currentSpeakItem) return;
+  const expW = normalize(currentSpeakItem.es).split(' ');
   const gotW = normalize(heard).split(' ');
   const pct  = Math.round(expW.filter(w => gotW.includes(w)).length / expW.length * 100);
   recordSpeakPerf(pct >= 60);
   if      (pct >= 70) { showFB('speak-fb', '¡Increíble! ' + pct + '% match — great pronunciation! 🎤 +30 XP', 'good'); addXP(30); }
-  else if (pct >= 40) { showFB('speak-fb', pct + '% match — getting there! Target: "' + p.es + '" +10 XP', 'info'); addXP(10); }
-  else                { showFB('speak-fb', pct + '% match — keep trying! Target: "' + p.es + '" 💪', 'bad'); }
+  else if (pct >= 40) { showFB('speak-fb', pct + '% match — getting there! Target: "' + currentSpeakItem.es + '" +10 XP', 'info'); addXP(10); }
+  else                { showFB('speak-fb', pct + '% match — keep trying! Target: "' + currentSpeakItem.es + '" 💪', 'bad'); }
 }
