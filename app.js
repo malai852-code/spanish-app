@@ -29,6 +29,10 @@ function insertAccent(targetId, ch) {
   el.focus();
 }
 
+// Stores {el, start, end} — updated on every input interaction
+// This survives focus changes completely since it's stored by reference + index
+let savedConjCursor = null;
+
 function buildConjAccentBar() {
   const bar = document.getElementById('conj-accent-bar');
   if (!bar) return;
@@ -38,23 +42,54 @@ function buildConjAccentBar() {
     btn.className   = 'inline-accent-key';
     btn.type        = 'button';
     btn.textContent = ch;
-    // preventDefault on mousedown stops the browser from moving focus away from the input
-    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('mousedown',   e => e.preventDefault());
+    btn.addEventListener('pointerdown', e => e.preventDefault());
     btn.addEventListener('click', () => insertIntoFocusedConj(ch));
     bar.appendChild(btn);
   });
 }
 
+// Call this after every loadVerb() to attach cursor-save listeners to the new inputs
+function attachConjCursorTracking() {
+  savedConjCursor = null;
+  PRONOUNS.forEach((p, i) => {
+    const inp = document.getElementById('ci-' + i);
+    if (!inp) return;
+    const save = () => {
+      savedConjCursor = { el: inp, start: inp.selectionStart, end: inp.selectionEnd };
+    };
+    inp.addEventListener('focus',   save);
+    inp.addEventListener('click',   save);
+    inp.addEventListener('keyup',   save);
+    inp.addEventListener('keydown', save);
+    inp.addEventListener('select',  save);
+  });
+}
+
 function insertIntoFocusedConj(ch) {
-  // At this point the input still has focus because mousedown was prevented
-  const focused = document.activeElement;
-  if (focused && focused.classList.contains('conj-input')) {
-    const s = focused.selectionStart;
-    const e = focused.selectionEnd;
-    focused.value = focused.value.slice(0, s) + ch + focused.value.slice(e);
-    focused.selectionStart = focused.selectionEnd = s + ch.length;
+  // First preference: document.activeElement still has the input (mousedown preventDefault worked)
+  let el    = null;
+  let start = 0;
+  let end   = 0;
+
+  if (document.activeElement && document.activeElement.classList.contains('conj-input')) {
+    el    = document.activeElement;
+    start = el.selectionStart;
+    end   = el.selectionEnd;
+  } else if (savedConjCursor && savedConjCursor.el && document.contains(savedConjCursor.el)) {
+    // Fall back to the last saved cursor position
+    el    = savedConjCursor.el;
+    start = savedConjCursor.start;
+    end   = savedConjCursor.end;
+  } else {
+    return; // Nothing to insert into
   }
-  // If somehow no conj-input is focused, do nothing rather than defaulting to ellos
+
+  el.value = el.value.slice(0, start) + ch + el.value.slice(end);
+  el.selectionStart = el.selectionEnd = start + ch.length;
+  el.focus();
+  // Update saved cursor after insert
+  savedConjCursor = { el, start: start + ch.length, end: start + ch.length };
 }
 
 // ============================================================
@@ -66,7 +101,6 @@ function tryLogin() {
     document.getElementById('login-page').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     buildAccentBar('setup-accent-bar', 'custom-vocab-input');
-    buildConjAccentBar();
     loadSavedState();
   } else {
     const err = document.getElementById('login-err');
@@ -570,7 +604,7 @@ function startActivity(id) {
 
   if      (id === 'flashcards')  { buildFCCatFilter(); loadCard(); }
   else if (id === 'quiz')        { quizReverse = false; loadQuiz(); }
-  else if (id === 'conjugation') { buildTenseTabs(); buildConjAccentBar(); loadVerb(); }
+  else if (id === 'conjugation') { buildTenseTabs(); loadVerb(); }
   else if (id === 'listen')      { loadListen(); }
   else if (id === 'speak')       { loadSpeak(); }
 
@@ -926,7 +960,9 @@ function loadVerb() {
     ).join('') +
     '</div>';
 
-  // Rebuild the accent bar now that the inputs exist in the DOM
+  // Attach cursor-save listeners to the freshly created inputs
+  attachConjCursorTracking();
+  // Rebuild the accent bar so its buttons are fresh too
   buildConjAccentBar();
 }
 

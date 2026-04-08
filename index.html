@@ -219,7 +219,8 @@
           <div class="verb-meaning" id="v-en">—</div>
           <div class="conj-grid" id="conj-grid"></div>
         </div>
-        <div class="inline-accent-bar" id="conj-accent-bar" style="margin-bottom:10px;"></div>
+        <!-- Accent bar lives HERE, outside conj-grid, so loadVerb() never wipes it -->
+        <div id="conj-accent-bar" class="inline-accent-bar" style="margin:8px 0 10px;"></div>
         <div style="display:flex;gap:8px;">
           <button class="btn primary" onclick="checkConj()" style="flex:1">✓ Check</button>
           <button class="btn" onclick="loadVerb()" style="flex:1">Next Verb →</button>
