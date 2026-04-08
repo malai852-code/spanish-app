@@ -7,7 +7,7 @@
 //      e.g. 'https://espanol-studio-api.yourname.workers.dev'
 // ============================================================
 
-const WORKER_URL = 'https://espanol-studio-api.YOUR-SUBDOMAIN.workers.dev';
+const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
 
 // Password — change this to whatever you want
 const APP_PASSWORD = 'espanol123';
