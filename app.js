@@ -29,6 +29,9 @@ function insertAccent(targetId, ch) {
   el.focus();
 }
 
+// Tracks the last conjugation input the student clicked/typed in
+let lastFocusedConjInput = null;
+
 function buildConjAccentBar() {
   const bar = document.getElementById('conj-accent-bar');
   if (!bar) return;
@@ -38,16 +41,19 @@ function buildConjAccentBar() {
 }
 
 function insertIntoFocusedConj(ch) {
-  const focused = document.activeElement;
-  if (focused && focused.classList.contains('conj-input')) {
-    const s = focused.selectionStart, e = focused.selectionEnd;
-    focused.value = focused.value.slice(0, s) + ch + focused.value.slice(e);
-    focused.selectionStart = focused.selectionEnd = s + ch.length;
-    focused.focus();
-  } else {
+  // Use the tracked input; fall back to first input if none tracked yet
+  let target = lastFocusedConjInput;
+  if (!target || !document.contains(target)) {
     const inputs = document.querySelectorAll('.conj-input');
-    if (inputs.length) { const last = inputs[inputs.length - 1]; last.value += ch; last.focus(); }
+    if (!inputs.length) return;
+    target = inputs[0];
   }
+  const s = target.selectionStart != null ? target.selectionStart : target.value.length;
+  const e = target.selectionEnd   != null ? target.selectionEnd   : target.value.length;
+  target.value = target.value.slice(0, s) + ch + target.value.slice(e);
+  target.selectionStart = target.selectionEnd = s + ch.length;
+  target.focus();
+  lastFocusedConjInput = target;
 }
 
 // ============================================================
@@ -879,30 +885,69 @@ function loadVerb() {
     v = VERBS[Math.floor(Math.random() * VERBS.length)];
   }
   verbIdx = VERBS.indexOf(v);
+  lastFocusedConjInput = null;
   document.getElementById('v-inf').textContent  = v.inf;
   document.getElementById('v-type').textContent = v.type;
   document.getElementById('v-en').textContent   = v.en;
   document.getElementById('conj-fb').innerHTML  = '';
-  document.getElementById('conj-grid').innerHTML = PRONOUNS.map((p, i) =>
-    '<div class="conj-row"><span class="conj-pronoun">' + p + '</span>' +
-    '<input class="conj-input" id="ci-' + i + '" placeholder="type here…" autocomplete="off" spellcheck="false"/></div>'
-  ).join('');
+
+  // Note on vosotros
+  const vosotrosNote = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:6px 10px;background:var(--bg);border-radius:var(--rs);">' +
+    '💡 <em>Vosotros</em> is mainly used in Spain. Most Latin American Spanish skips it — but it can still appear on tests!' +
+    '</div>';
+
+  document.getElementById('conj-grid').innerHTML = vosotrosNote +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">' +
+    PRONOUNS.map((p, i) =>
+      '<div class="conj-row">' +
+      '<span class="conj-pronoun">' + p + '</span>' +
+      '<input class="conj-input" id="ci-' + i + '" placeholder="type here…" autocomplete="off" spellcheck="false"/>' +
+      '</div>'
+    ).join('') +
+    '</div>';
+
+  // Track focus on each input for the accent bar
+  PRONOUNS.forEach((p, i) => {
+    const inp = document.getElementById('ci-' + i);
+    if (inp) {
+      inp.addEventListener('focus', () => { lastFocusedConjInput = inp; });
+      inp.addEventListener('click', () => { lastFocusedConjInput = inp; });
+    }
+  });
 }
 
 function checkConj() {
   const v = VERBS[verbIdx]; const ans = v.conj[tense]; let correct = 0;
   P_KEYS.forEach((key, i) => {
     const inp = document.getElementById('ci-' + i);
+    if (!inp) return;
     const val = inp.value.trim().toLowerCase();
     inp.classList.remove('correct', 'wrong');
-    if (val === ans[key].toLowerCase()) { inp.classList.add('correct'); correct++; }
-    else { inp.classList.add('wrong'); inp.placeholder = ans[key]; }
+    if (val === ans[key].toLowerCase()) {
+      inp.classList.add('correct');
+      correct++;
+    } else {
+      inp.classList.add('wrong');
+      // Fill the correct answer directly into wrong fields so student can see it
+      inp.value = ans[key];
+      inp.style.fontStyle = 'italic';
+      inp.style.opacity   = '0.75';
+      inp.readOnly = true;
+    }
   });
   const pts = correct * 10; addXP(pts);
   recordVerbPerf(v.inf, correct >= 5);
-  if (correct === 6)     showFB('conj-fb', '¡Perfecto! All 6 correct! 🏆 +' + pts + ' XP', 'good');
-  else if (correct >= 4) showFB('conj-fb', correct + '/6 — so close! Check highlighted boxes. +' + pts + ' XP', 'info');
-  else                   showFB('conj-fb', correct + '/6 — keep drilling! Wrong answers shown. +' + pts + ' XP 💪', 'bad');
+
+  let msg = '';
+  if (correct === 6) {
+    msg = '¡Perfecto! All 6 correct! 🏆 +' + pts + ' XP';
+    showFB('conj-fb', msg, 'good');
+  } else {
+    const wrongCount = 6 - correct;
+    msg = correct + '/6 correct. The ' + wrongCount + ' wrong answer' + (wrongCount > 1 ? 's are' : ' is') +
+      ' filled in above in italic — study them, then hit Next Verb. +' + pts + ' XP';
+    showFB('conj-fb', msg, correct >= 4 ? 'info' : 'bad');
+  }
 }
 
 function speakVerb() {
@@ -943,15 +988,81 @@ function playListen(override) {
 
 function checkListen() {
   if (!currentListenItem) return;
-  const ans     = document.getElementById('listen-ans').value.trim().toLowerCase();
-  const correct = (currentListenItem.answer || currentListenItem.ans || '').toLowerCase();
-  const trans   = document.getElementById('listen-trans');
+  const studentAns = document.getElementById('listen-ans').value.trim();
+  const correct    = (currentListenItem.answer || currentListenItem.ans || '').trim();
+  const trans      = document.getElementById('listen-trans');
   trans.textContent   = 'Phrase: ' + currentListenItem.es + (currentListenItem.hint ? ' | Hint: ' + currentListenItem.hint : '');
   trans.style.display = 'block';
-  const isCorrect = ans.includes(correct) || (correct.includes(ans) && ans.length > 2);
+
+  if (!studentAns) {
+    showFB('listen-fb', 'Type your answer first!', 'info');
+    return;
+  }
+
+  const isCorrect = fuzzyListenMatch(studentAns, correct);
   recordListenPerf(isCorrect);
-  if (isCorrect) { showFB('listen-fb', '¡Correcto! Your ears are getting sharp! 👂 +25 XP', 'good'); addXP(25); }
-  else           { showFB('listen-fb', 'Not quite — expected: "' + correct + '". Try the slow button!', 'bad'); }
+
+  if (isCorrect) {
+    showFB('listen-fb', '¡Correcto! Your ears are getting sharp! 👂 +25 XP', 'good');
+    addXP(25);
+  } else {
+    // Show the correct answer clearly and be encouraging
+    showFB('listen-fb',
+      'Not quite. You wrote: "<em>' + studentAns + '</em>" — expected something like: "<strong>' + correct + '</strong>". ' +
+      'Try playing it at slow speed and listen again! 🐢', 'bad');
+    // Also ask AI if it was actually close enough (async — updates feedback if AI says yes)
+    aiCheckListenAnswer(studentAns, correct, currentListenItem.es);
+  }
+}
+
+// Fuzzy match: normalize both strings and check word overlap
+function fuzzyListenMatch(studentAns, correct) {
+  const normStudent = normalize(studentAns);
+  const normCorrect = normalize(correct);
+
+  // Exact or contains match
+  if (normStudent === normCorrect) return true;
+  if (normStudent.includes(normCorrect)) return true;
+  if (normCorrect.includes(normStudent) && normStudent.length > 2) return true;
+
+  // Word overlap: if student got >= 60% of the key words, accept it
+  const correctWords  = normCorrect.split(' ').filter(w => w.length > 2); // ignore tiny words
+  const studentWords  = normStudent.split(' ');
+  if (correctWords.length === 0) return false;
+  const matched = correctWords.filter(w => studentWords.some(sw => sw.includes(w) || w.includes(sw)));
+  if (matched.length / correctWords.length >= 0.6) return true;
+
+  // Number equivalents (e.g. "15" vs "fifteen" vs "quince")
+  const numMap = { '1':'one','2':'two','3':'three','4':'four','5':'five','6':'six','7':'seven','8':'eight','9':'nine','10':'ten',
+                   '11':'eleven','12':'twelve','13':'thirteen','14':'fourteen','15':'fifteen','16':'sixteen',
+                   '20':'twenty','30':'thirty' };
+  const expandNum = s => { let r = s; Object.entries(numMap).forEach(([n, w]) => { r = r.replace(new RegExp('\\b'+n+'\\b','g'), w); }); return r; };
+  if (normalize(expandNum(studentAns)).includes(normalize(expandNum(correct)))) return true;
+
+  return false;
+}
+
+// AI double-check for borderline answers — updates the feedback message asynchronously
+async function aiCheckListenAnswer(studentAns, correct, spanishPhrase) {
+  try {
+    const system = 'You are grading a Spanish listening exercise for an 8th grade student. Answer with ONLY "correct" or "incorrect" — no other text.';
+    const prompt = 'The Spanish phrase was: "' + spanishPhrase + '"\n' +
+      'The expected answer was: "' + correct + '"\n' +
+      'The student wrote: "' + studentAns + '"\n\n' +
+      'Is the student\'s answer close enough to be marked correct? Consider synonyms, partial answers, and reasonable paraphrasing. Answer "correct" or "incorrect" only.';
+    const result = (await workerCall(system, prompt, 10)).toLowerCase().trim();
+    if (result.startsWith('correct')) {
+      // AI says it was actually fine — update the feedback
+      recordListenPerf(true); // correct the record
+      perfData.listen.total--; // undo the wrong one we already recorded
+      if (perfData.listen.correct > 0) perfData.listen.correct--; // remove the false negative
+      saveState();
+      showFB('listen-fb', '✨ AI says that counts! Good enough answer! 👂 +25 XP', 'good');
+      addXP(25);
+    }
+  } catch (e) {
+    // Silently fail — original feedback stays
+  }
 }
 
 // ============================================================
