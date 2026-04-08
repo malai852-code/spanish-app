@@ -29,31 +29,32 @@ function insertAccent(targetId, ch) {
   el.focus();
 }
 
-// Tracks the last conjugation input the student clicked/typed in
-let lastFocusedConjInput = null;
-
 function buildConjAccentBar() {
   const bar = document.getElementById('conj-accent-bar');
   if (!bar) return;
-  bar.innerHTML = ACCENTS.map(ch =>
-    '<button class="inline-accent-key" type="button" onclick="insertIntoFocusedConj(\'' + ch + '\')">' + ch + '</button>'
-  ).join('');
+  bar.innerHTML = '';
+  ACCENTS.forEach(ch => {
+    const btn = document.createElement('button');
+    btn.className   = 'inline-accent-key';
+    btn.type        = 'button';
+    btn.textContent = ch;
+    // preventDefault on mousedown stops the browser from moving focus away from the input
+    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('click', () => insertIntoFocusedConj(ch));
+    bar.appendChild(btn);
+  });
 }
 
 function insertIntoFocusedConj(ch) {
-  // Use the tracked input; fall back to first input if none tracked yet
-  let target = lastFocusedConjInput;
-  if (!target || !document.contains(target)) {
-    const inputs = document.querySelectorAll('.conj-input');
-    if (!inputs.length) return;
-    target = inputs[0];
+  // At this point the input still has focus because mousedown was prevented
+  const focused = document.activeElement;
+  if (focused && focused.classList.contains('conj-input')) {
+    const s = focused.selectionStart;
+    const e = focused.selectionEnd;
+    focused.value = focused.value.slice(0, s) + ch + focused.value.slice(e);
+    focused.selectionStart = focused.selectionEnd = s + ch.length;
   }
-  const s = target.selectionStart != null ? target.selectionStart : target.value.length;
-  const e = target.selectionEnd   != null ? target.selectionEnd   : target.value.length;
-  target.value = target.value.slice(0, s) + ch + target.value.slice(e);
-  target.selectionStart = target.selectionEnd = s + ch.length;
-  target.focus();
-  lastFocusedConjInput = target;
+  // If somehow no conj-input is focused, do nothing rather than defaulting to ellos
 }
 
 // ============================================================
@@ -764,6 +765,22 @@ async function loadQuiz() {
   const q = aiQuizQueue.shift();
   currentQuizItem = { es: q.vocab_es || q.question, cat: 'AI' };
 
+  // Store what should actually be spoken in Spanish — used by the 🔊 button
+  // For fill_blank, speak the full sentence with the blank replaced by the correct answer
+  // For translate_es, speak the Spanish question word
+  // For translate_en, speak the correct Spanish answer
+  let audioText = '';
+  if (q.type === 'fill_blank') {
+    audioText = q.question.replace(/_{2,}/g, q.correct);
+  } else if (q.type === 'translate_es') {
+    audioText = q.question;  // the question IS the Spanish word
+  } else if (q.type === 'translate_en') {
+    audioText = q.correct;   // the correct answer IS the Spanish word
+  } else {
+    audioText = q.vocab_es || q.question;
+  }
+  currentQuizItem._audioText = audioText;
+
   const dirLabel = {
     translate_es: 'What does this mean in English?',
     translate_en: 'How do you say this in Spanish?',
@@ -801,9 +818,9 @@ function answerQuizAI(btn, chosen, correct, questionWord) {
     recordVocabPerf(cat, true);
     const praise = ['¡Correcto! 🎉 +20 XP', '¡Muy bien! +20 XP', '¡Perfecto! 🧠 +20 XP', '¡Sí! +20 XP'];
     showFB('q-fb', praise[Math.floor(Math.random() * praise.length)], 'good');
-    // Speak the Spanish side
-    const toSpeak = /[áéíóúñü¿¡]/i.test(correct) ? correct : questionWord;
-    speakTTS(toSpeak);
+    // Speak the Spanish phrase so she hears the correct pronunciation
+    const toSpeak = (currentQuizItem && currentQuizItem._audioText) ? currentQuizItem._audioText : correct;
+    speakTTS(toSpeak, 'es-ES');
   } else {
     btn.classList.add('wrong');
     document.querySelectorAll('.quiz-opt').forEach(o => { if (o.textContent === correct) o.classList.add('correct'); });
@@ -838,7 +855,7 @@ function loadQuizFallback() {
         btn.classList.add('correct'); quizCorrect++; addXP(20);
         recordVocabPerf(item.cat, true);
         showFB('q-fb', '¡Correcto! +20 XP 🎉', 'good');
-        speakTTS(item.es);
+        speakTTS(item.es, 'es-ES');
       } else {
         btn.classList.add('wrong');
         document.querySelectorAll('.quiz-opt').forEach(o => { if (o.textContent === correct) o.classList.add('correct'); });
@@ -853,8 +870,12 @@ function loadQuizFallback() {
 }
 
 function speakQuiz() {
-  const w = document.getElementById('q-word').textContent;
-  speakTTS(w, /[áéíóúñü¿¡]/i.test(w) ? 'es-ES' : 'en-US');
+  // Always speak Spanish — use the pre-stored audio text which has blanks filled in
+  // and is guaranteed to be the Spanish side regardless of question type
+  const text = (currentQuizItem && currentQuizItem._audioText)
+    ? currentQuizItem._audioText
+    : document.getElementById('q-word').textContent.replace(/_{2,}/g, '');
+  if (text) speakTTS(text, 'es-ES');
 }
 
 function toggleQuizDir() {
@@ -885,7 +906,6 @@ function loadVerb() {
     v = VERBS[Math.floor(Math.random() * VERBS.length)];
   }
   verbIdx = VERBS.indexOf(v);
-  lastFocusedConjInput = null;
   document.getElementById('v-inf').textContent  = v.inf;
   document.getElementById('v-type').textContent = v.type;
   document.getElementById('v-en').textContent   = v.en;
@@ -906,14 +926,8 @@ function loadVerb() {
     ).join('') +
     '</div>';
 
-  // Track focus on each input for the accent bar
-  PRONOUNS.forEach((p, i) => {
-    const inp = document.getElementById('ci-' + i);
-    if (inp) {
-      inp.addEventListener('focus', () => { lastFocusedConjInput = inp; });
-      inp.addEventListener('click', () => { lastFocusedConjInput = inp; });
-    }
-  });
+  // Rebuild the accent bar now that the inputs exist in the DOM
+  buildConjAccentBar();
 }
 
 function checkConj() {
