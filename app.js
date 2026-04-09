@@ -194,6 +194,16 @@ function resetAppConfirmed() {
   currentListenItem = null; currentSpeakItem = null;
   perfData = { vocab: {}, verbs: {}, listen: { correct: 0, total: 0 }, speak: { correct: 0, total: 0 } };
 
+  // Reset all visible stat tiles so old numbers don't show
+  ['s-streak','h-streak'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '0'; });
+  ['s-xp','h-xp'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '0'; });
+  const score = document.getElementById('s-score'); if (score) score.textContent = '—';
+  const learned = document.getElementById('s-learned'); if (learned) learned.textContent = '0';
+  const progFill = document.getElementById('dprog-fill'); if (progFill) progFill.style.width = '0%';
+  const progLbl = document.getElementById('dprog-lbl'); if (progLbl) progLbl.textContent = '0 of 0 complete';
+  const planGrid = document.getElementById('plan-grid'); if (planGrid) planGrid.innerHTML = '';
+  const weakCard = document.getElementById('weakness-card'); if (weakCard) weakCard.style.display = 'none';
+
   // Reset setup UI to defaults
   document.getElementById('setup-name').value = '';
   document.querySelectorAll('.topic-chip').forEach(c => {
@@ -575,8 +585,8 @@ function buildDailyPlan() {
   }).filter(Boolean);
 
   let plan;
-  if      (dailyMinutes <= 10) plan = [{ id: 'flashcards', mins: 4 }, { id: 'quiz', mins: 3 }, { id: 'conjugation', mins: 3 }];
-  else if (dailyMinutes <= 20) plan = [{ id: 'flashcards', mins: 5 }, { id: 'quiz', mins: 5 }, { id: 'conjugation', mins: 5 }, { id: 'listen', mins: 5 }];
+  if      (dailyMinutes <= 10) plan = [{ id: 'flashcards', mins: 3 }, { id: 'quiz', mins: 4 }, { id: 'conjugation', mins: 3 }];
+  else if (dailyMinutes <= 20) plan = [{ id: 'flashcards', mins: 4 }, { id: 'quiz', mins: 4 }, { id: 'conjugation', mins: 4 }, { id: 'listen', mins: 4 }, { id: 'speak', mins: 4 }];
   else if (dailyMinutes <= 30) plan = [{ id: 'flashcards', mins: 6 }, { id: 'quiz', mins: 6 }, { id: 'conjugation', mins: 6 }, { id: 'listen', mins: 6 }, { id: 'speak', mins: 6 }];
   else                         plan = [{ id: 'flashcards', mins: 9 }, { id: 'quiz', mins: 9 }, { id: 'conjugation', mins: 9 }, { id: 'listen', mins: 9 }, { id: 'speak', mins: 9 }];
 
