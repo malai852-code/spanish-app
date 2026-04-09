@@ -9,7 +9,7 @@ const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
 // Must match the SAVE_TOKEN secret set in your Cloudflare Worker
 // Change this to any private string you choose — set the same value
 // as a Worker secret: wrangler secret put SAVE_TOKEN
-const SAVE_TOKEN = 'espanol-secret-123';
+const SAVE_TOKEN = 'espanol-secret-42';
 
 // ============================================================
 // ACCENT BAR
@@ -242,10 +242,15 @@ async function resetAppConfirmed() {
   const card = document.getElementById('reset-confirm-card');
   if (card) card.style.display = 'none';
 
-  // Wipe both localStorage and cloud
+  // Show resetting status
+  setSyncStatus('saving');
+
+  // Wipe localStorage first
   try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+
+  // Write reset flag to cloud and WAIT for it to complete before reloading
+  // This ensures other devices will see the reset flag when they next load
   try {
-    // Save an empty/fresh progress object to the cloud so other devices also reset
     await fetch(WORKER_URL + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -254,7 +259,9 @@ async function resetAppConfirmed() {
         progress: { reset: true, savedAt: new Date().toISOString() },
       }),
     });
-  } catch (e) {}
+  } catch (e) {
+    // Even if cloud save fails, still reload so this device resets
+  }
 
   location.reload();
 }
@@ -285,7 +292,15 @@ async function loadSavedState() {
   // Then check the cloud for a newer save (e.g. progress from another device)
   const cloudData = await cloudLoad();
 
-  if (cloudData && !cloudData.reset) {
+  if (cloudData) {
+    // If the cloud has a reset flag, this device needs to wipe and start fresh too
+    if (cloudData.reset) {
+      try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+      // Stay on setup page with clean state — no reload needed, state vars are already at defaults
+      setSyncStatus('');
+      return;
+    }
+
     const localTime = localData?.savedAt ? new Date(localData.savedAt) : new Date(0);
     const cloudTime = cloudData.savedAt  ? new Date(cloudData.savedAt)  : new Date(0);
 
