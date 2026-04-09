@@ -171,27 +171,26 @@
         <div class="cat-filter" id="fc-cat-filter"></div>
         <div class="fc-prog-bar"><div class="fc-prog-fill" id="fc-prog" style="width:0%"></div></div>
         <div class="fc-counter" id="fc-counter">Card 1</div>
+
         <div class="flashcard-scene">
-          <div class="flashcard" id="flashcard" onclick="flipCard()">
+          <div class="flashcard" id="flashcard">
             <div class="fc-face fc-front">
-              <div class="fc-tag" id="fc-cat">Category</div>
               <div class="fc-word" id="fc-es">—</div>
               <div class="fc-pron" id="fc-pron"></div>
-              <div class="fc-hint">tap to reveal →</div>
+              <div class="fc-hint">choose the correct translation below</div>
             </div>
             <div class="fc-face fc-back">
-              <div class="fc-tag" id="fc-cat2"></div>
               <div class="fc-translation" id="fc-en">—</div>
               <div class="fc-example" id="fc-ex"></div>
             </div>
           </div>
         </div>
-        <div class="fc-controls">
-          <button class="btn audio" onclick="speakCurrent()">🔊</button>
-          <button class="btn danger" onclick="rateCard('hard')" style="flex:1">😰 Hard</button>
-          <button class="btn" onclick="rateCard('ok')" style="flex:1">😐 OK</button>
-          <button class="btn success" onclick="rateCard('easy')" style="flex:1">😊 Easy</button>
+
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn audio" onclick="speakCurrent()" style="font-size:13px;">🔊 Hear word &amp; sentence</button>
         </div>
+
+        <div class="fc-mc-opts" id="fc-mc-opts"></div>
         <div id="fc-fb"></div>
       </div>
 

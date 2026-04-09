@@ -751,7 +751,7 @@ function showLoadingInEl(el) {
 }
 
 // ============================================================
-// FLASHCARDS
+// FLASHCARDS — multiple choice
 // ============================================================
 function buildFCCatFilter() {
   const cats = ['All', ...new Set(activeVocab.map(v => v.cat))];
@@ -766,6 +766,8 @@ function filteredVocab() { return fcCat === 'All' ? activeVocab : activeVocab.fi
 function loadCard() {
   const list = filteredVocab();
   if (!list.length) return;
+
+  // Bias toward weak categories
   const { weak } = getWeaknesses();
   const weakCats = weak.map(w => w.label);
   let item;
@@ -775,35 +777,94 @@ function loadCard() {
   } else {
     item = list[fcIdx % list.length];
   }
+
+  // Reset card to front (unflipped)
+  const card = document.getElementById('flashcard');
+  card.classList.remove('flipped');
+  fcFlipped = false;
+  card._item = item;
+
+  // Fill front face — no category label
   document.getElementById('fc-es').textContent   = item.es;
   document.getElementById('fc-pron').textContent = item.pron || '';
-  document.getElementById('fc-cat').textContent  = item.cat;
-  document.getElementById('fc-cat2').textContent = item.cat;
-  document.getElementById('fc-en').textContent   = item.en;
-  document.getElementById('fc-ex').textContent   = item.ex || '';
+
+  // Fill back face — translation + example only
+  document.getElementById('fc-en').textContent = item.en;
+  document.getElementById('fc-ex').textContent = item.ex || '';
+
+  // Progress
   const n = fcIdx % list.length + 1;
   document.getElementById('fc-counter').textContent = 'Card ' + n + ' of ' + list.length;
   document.getElementById('fc-prog').style.width    = Math.round(n / list.length * 100) + '%';
-  if (fcFlipped) { document.getElementById('flashcard').classList.remove('flipped'); fcFlipped = false; }
-  document.getElementById('flashcard')._item = item;
+
+  // Clear feedback
+  document.getElementById('fc-fb').innerHTML = '';
+
+  // Build 4 multiple-choice options (1 correct + 3 wrong)
+  const pool   = activeVocab.filter(v => v !== item);
+  const wrongs = pool.sort(() => Math.random() - 0.5).slice(0, 3);
+  const opts   = [item, ...wrongs].sort(() => Math.random() - 0.5);
+
+  const container = document.getElementById('fc-mc-opts');
+  container.innerHTML = '';
+  opts.forEach(o => {
+    const btn = document.createElement('button');
+    btn.className   = 'fc-mc-btn';
+    btn.textContent = o.en;
+    btn.addEventListener('click', () => answerCard(btn, o.en, item.en, item));
+    container.appendChild(btn);
+  });
 }
 
-function flipCard() { fcFlipped = !fcFlipped; document.getElementById('flashcard').classList.toggle('flipped', fcFlipped); }
-function speakCurrent() { const item = document.getElementById('flashcard')._item; if (item) speakTTS(item.es); }
+function answerCard(btn, chosen, correct, item) {
+  // Disable all buttons immediately
+  document.querySelectorAll('.fc-mc-btn').forEach(b => b.classList.add('disabled'));
 
-function rateCard(rating) {
-  const item = document.getElementById('flashcard')._item;
-  const pts  = { easy: 15, ok: 8, hard: 3 }[rating];
-  addXP(pts);
-  if (item) {
-    recordVocabPerf(item.cat, rating === 'easy');
-    if (rating === 'easy') { learnedSet.add(item.es); saveState(); }
+  const isCorrect = chosen === correct;
+
+  // Mark chosen and reveal correct
+  btn.classList.add(isCorrect ? 'correct' : 'wrong');
+  if (!isCorrect) {
+    document.querySelectorAll('.fc-mc-btn').forEach(b => {
+      if (b.textContent === correct) b.classList.add('correct');
+    });
   }
-  fcIdx++;
-  loadCard();
-  const msgs  = { easy: '¡Excelente! +' + pts + ' XP 🌟', ok: 'Good try! +' + pts + ' XP', hard: 'Keep going! +' + pts + ' XP 💪' };
-  const types = { easy: 'good', ok: 'info', hard: 'bad' };
-  showFB('fc-fb', msgs[rating], types[rating]);
+
+  // Flip the card over to show the full answer + example sentence
+  setTimeout(() => {
+    document.getElementById('flashcard').classList.add('flipped');
+    fcFlipped = true;
+  }, 200);
+
+  // Record performance and award XP
+  recordVocabPerf(item.cat, isCorrect);
+  if (isCorrect) {
+    addXP(20);
+    learnedSet.add(item.es);
+    saveState();
+    showFB('fc-fb', '¡Correcto! +20 XP 🌟', 'good');
+  } else {
+    addXP(5);
+    showFB('fc-fb', 'The answer is: <strong>' + correct + '</strong> — keep practicing! +5 XP 💪', 'bad');
+  }
+
+  // Auto-advance to next card after 2.2 seconds
+  setTimeout(() => {
+    fcIdx++;
+    loadCard();
+  }, 2200);
+}
+
+// 🔊 Speaks the Spanish word, pauses briefly, then speaks the example sentence
+function speakCurrent() {
+  const item = document.getElementById('flashcard')._item;
+  if (!item) return;
+  speakTTS(item.es, 'es-ES', 0.9);
+  if (item.ex) {
+    // Queue the sentence after the word finishes (~1.5s per short word)
+    const wordDelay = Math.max(1200, item.es.length * 80);
+    setTimeout(() => speakTTS(item.ex, 'es-ES', 0.85), wordDelay);
+  }
 }
 
 // ============================================================
