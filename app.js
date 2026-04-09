@@ -169,6 +169,40 @@ function saveState() {
   } catch (e) {}
 }
 
+function resetApp() {
+  if (!confirm('Are you sure you want to clear ALL progress?\n\nThis will erase your XP, streak, quiz scores, learned words, custom vocabulary, and performance data. This cannot be undone.')) return;
+
+  // Clear localStorage
+  try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+
+  // Reset all state variables
+  userName = ''; dailyMinutes = 20; selectedTopics = []; customWords = []; activeVocab = [];
+  planActivities = []; completedActivities = new Set();
+  xp = 0; streak = 1; quizCorrect = 0; quizTotal = 0; learnedSet = new Set();
+  fcIdx = 0; fcCat = 'All'; fcFlipped = false;
+  quizReverse = false; currentQuizItem = null;
+  verbIdx = 0; tense = 'pres';
+  aiQuizQueue = []; aiListenQueue = []; aiSpeakQueue = [];
+  currentListenItem = null; currentSpeakItem = null;
+  perfData = { vocab: {}, verbs: {}, listen: { correct: 0, total: 0 }, speak: { correct: 0, total: 0 } };
+
+  // Reset setup UI to defaults
+  document.getElementById('setup-name').value = '';
+  document.querySelectorAll('.topic-chip').forEach(c => {
+    const defaultOn = ['School','Family','Food','Time','Adjectives','Phrases'];
+    c.classList.toggle('sel', defaultOn.includes(c.dataset.topic));
+  });
+  document.querySelectorAll('.time-opt').forEach(o => {
+    o.classList.toggle('sel', o.dataset.mins === '20');
+  });
+  document.getElementById('vocab-tags').innerHTML = '';
+  document.getElementById('ai-expand-status').textContent = '';
+  document.getElementById('custom-vocab-input').value = '';
+
+  // Go back to setup
+  goPage('setup');
+}
+
 function loadSavedState() {
   try {
     const raw = localStorage.getItem('espanol_v3');
