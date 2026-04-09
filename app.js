@@ -5,7 +5,6 @@
 // ============================================================
 
 const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
-const APP_PASSWORD = 'espanol123';
 
 // ============================================================
 // ACCENT BAR
@@ -93,22 +92,12 @@ function insertIntoFocusedConj(ch) {
 }
 
 // ============================================================
-// LOGIN
+// INIT — runs as soon as the DOM is ready
 // ============================================================
-function tryLogin() {
-  const val = document.getElementById('login-pw').value;
-  if (val === APP_PASSWORD) {
-    document.getElementById('login-page').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-    buildAccentBar('setup-accent-bar', 'custom-vocab-input');
-    loadSavedState();
-  } else {
-    const err = document.getElementById('login-err');
-    err.style.display = 'block';
-    document.getElementById('login-pw').value = '';
-    setTimeout(() => { err.style.display = 'none'; }, 3000);
-  }
-}
+document.addEventListener('DOMContentLoaded', () => {
+  buildAccentBar('setup-accent-bar', 'custom-vocab-input');
+  loadSavedState();
+});
 
 // ============================================================
 // STATE
@@ -180,44 +169,10 @@ function resetAppConfirmed() {
   const card = document.getElementById('reset-confirm-card');
   if (card) card.style.display = 'none';
 
-  // Clear localStorage
+  // Wipe localStorage then reload the page — this is the only guaranteed
+  // way to clear all JS state, DOM values, and cached variables at once
   try { localStorage.removeItem('espanol_v3'); } catch (e) {}
-
-  // Reset all state variables
-  userName = ''; dailyMinutes = 20; selectedTopics = []; customWords = []; activeVocab = [];
-  planActivities = []; completedActivities = new Set();
-  xp = 0; streak = 1; quizCorrect = 0; quizTotal = 0; learnedSet = new Set();
-  fcIdx = 0; fcCat = 'All'; fcFlipped = false;
-  quizReverse = false; currentQuizItem = null;
-  verbIdx = 0; tense = 'pres';
-  aiQuizQueue = []; aiListenQueue = []; aiSpeakQueue = [];
-  currentListenItem = null; currentSpeakItem = null;
-  perfData = { vocab: {}, verbs: {}, listen: { correct: 0, total: 0 }, speak: { correct: 0, total: 0 } };
-
-  // Reset all visible stat tiles so old numbers don't show
-  ['s-streak','h-streak'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '0'; });
-  ['s-xp','h-xp'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '0'; });
-  const score = document.getElementById('s-score'); if (score) score.textContent = '—';
-  const learned = document.getElementById('s-learned'); if (learned) learned.textContent = '0';
-  const progFill = document.getElementById('dprog-fill'); if (progFill) progFill.style.width = '0%';
-  const progLbl = document.getElementById('dprog-lbl'); if (progLbl) progLbl.textContent = '0 of 0 complete';
-  const planGrid = document.getElementById('plan-grid'); if (planGrid) planGrid.innerHTML = '';
-  const weakCard = document.getElementById('weakness-card'); if (weakCard) weakCard.style.display = 'none';
-
-  // Reset setup UI to defaults
-  document.getElementById('setup-name').value = '';
-  document.querySelectorAll('.topic-chip').forEach(c => {
-    const defaultOn = ['School','Family','Food','Time','Adjectives','Phrases'];
-    c.classList.toggle('sel', defaultOn.includes(c.dataset.topic));
-  });
-  document.querySelectorAll('.time-opt').forEach(o => {
-    o.classList.toggle('sel', o.dataset.mins === '20');
-  });
-  document.getElementById('vocab-tags').innerHTML = '';
-  document.getElementById('ai-expand-status').textContent = '';
-  document.getElementById('custom-vocab-input').value = '';
-
-  goPage('setup');
+  location.reload();
 }
 
 function resetAppCancel() {

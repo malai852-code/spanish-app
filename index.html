@@ -3,30 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>¡Español Studio! — AI Spanish Coach</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
-<!-- ===== LOGIN ===== -->
-<div id="login-page">
-  <div class="login-wrap">
-    <div class="login-box">
-      <div class="login-logo">¡<span>Español</span> Studio!</div>
-      <div class="login-sub">Your personal AI Spanish coach 🇪🇸</div>
-      <input class="login-input" id="login-pw" type="password" placeholder="Enter your password"
-             onkeydown="if(event.key==='Enter') tryLogin()"/>
-      <button class="login-btn" onclick="tryLogin()">Enter →</button>
-      <div class="login-err" id="login-err">❌ Wrong password — try again!</div>
-      <div class="login-hint">Ask a parent if you've forgotten your password.</div>
-    </div>
-  </div>
-</div>
-
-<!-- ===== APP (hidden until login) ===== -->
-<div id="app" style="display:none;">
+<div id="app">
 
   <div class="header">
     <div class="logo">¡<span>Español</span> Studio!</div>
@@ -302,7 +289,7 @@
   </div>
 </div>
 
-<script src="data.js"></script>
-<script src="app.js"></script>
+<script src="data.js?v=2"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
