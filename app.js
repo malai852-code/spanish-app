@@ -6,6 +6,11 @@
 
 const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
 
+// Must match the SAVE_TOKEN secret set in your Cloudflare Worker
+// Change this to any private string you choose — set the same value
+// as a Worker secret: wrangler secret put SAVE_TOKEN
+const SAVE_TOKEN = 'espanol-secret-42';
+
 // ============================================================
 // ACCENT BAR
 // ============================================================
@@ -146,32 +151,111 @@ const ACTIVITY_DEFS = [
 ];
 
 // ============================================================
-// PERSIST STATE
+// PERSIST STATE — localStorage (instant) + cloud KV (background sync)
 // ============================================================
+
+// Debounce timer so we don't hammer the cloud on every keypress
+let cloudSaveTimer = null;
+
+function buildProgressObject() {
+  return {
+    userName, dailyMinutes, selectedTopics, customWords,
+    xp, streak, quizCorrect, quizTotal,
+    learnedSet: [...learnedSet], perfData,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function applyProgressObject(s) {
+  userName       = s.userName       || '';
+  dailyMinutes   = s.dailyMinutes   || 20;
+  selectedTopics = s.selectedTopics || [];
+  customWords    = s.customWords    || [];
+  xp             = s.xp             || 0;
+  streak         = s.streak         || 1;
+  quizCorrect    = s.quizCorrect    || 0;
+  quizTotal      = s.quizTotal      || 0;
+  learnedSet     = new Set(s.learnedSet || []);
+  perfData       = s.perfData       || { vocab: {}, verbs: {}, listen: { correct: 0, total: 0 }, speak: { correct: 0, total: 0 } };
+}
+
 function saveState() {
+  // 1. Always save to localStorage immediately (instant, offline-safe)
   try {
-    localStorage.setItem('espanol_v3', JSON.stringify({
-      userName, dailyMinutes, selectedTopics, customWords,
-      xp, streak, quizCorrect, quizTotal,
-      learnedSet: [...learnedSet], perfData,
-    }));
+    localStorage.setItem('espanol_v3', JSON.stringify(buildProgressObject()));
   } catch (e) {}
+
+  // 2. Debounce cloud save — fires 4 seconds after the last saveState call
+  //    so rapid interactions (answering many questions) only trigger one cloud write
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(() => cloudSave(), 4000);
+}
+
+async function cloudSave() {
+  try {
+    setSyncStatus('saving');
+    const resp = await fetch(WORKER_URL + '/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: SAVE_TOKEN, progress: buildProgressObject() }),
+    });
+    if (resp.ok) setSyncStatus('saved');
+    else setSyncStatus('error');
+  } catch (e) {
+    setSyncStatus('error');
+  }
+}
+
+async function cloudLoad() {
+  try {
+    const resp = await fetch(WORKER_URL + '/api/load?token=' + encodeURIComponent(SAVE_TOKEN));
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.found ? data.data : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Sync status indicator in the header
+function setSyncStatus(status) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const states = {
+    saving: { text: '☁ Saving…',  color: 'rgba(255,255,255,0.6)'  },
+    saved:  { text: '☁ Synced',   color: 'rgba(159,225,203,0.9)'  },
+    error:  { text: '☁ Offline',  color: 'rgba(255,180,150,0.9)'  },
+    loading:{ text: '☁ Loading…', color: 'rgba(255,255,255,0.6)'  },
+  };
+  const s = states[status] || states.saved;
+  el.textContent = s.text;
+  el.style.color = s.color;
+  if (status === 'saved') setTimeout(() => { if (el.textContent === '☁ Synced') el.textContent = ''; }, 3000);
 }
 
 function resetApp() {
-  // confirm() is blocked in sandboxed iframes (GitHub Pages etc.)
-  // Use inline confirmation instead
   const card = document.getElementById('reset-confirm-card');
   if (card) card.style.display = 'block';
 }
 
-function resetAppConfirmed() {
+async function resetAppConfirmed() {
   const card = document.getElementById('reset-confirm-card');
   if (card) card.style.display = 'none';
 
-  // Wipe localStorage then reload the page — this is the only guaranteed
-  // way to clear all JS state, DOM values, and cached variables at once
+  // Wipe both localStorage and cloud
   try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+  try {
+    // Save an empty/fresh progress object to the cloud so other devices also reset
+    await fetch(WORKER_URL + '/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: SAVE_TOKEN,
+        progress: { reset: true, savedAt: new Date().toISOString() },
+      }),
+    });
+  } catch (e) {}
+
   location.reload();
 }
 
@@ -180,38 +264,60 @@ function resetAppCancel() {
   if (card) card.style.display = 'none';
 }
 
-function loadSavedState() {
+async function loadSavedState() {
+  // Strategy: load localStorage instantly so the UI appears immediately,
+  // then check the cloud in the background and use whichever is newer.
+  setSyncStatus('loading');
+
+  let localData = null;
   try {
     const raw = localStorage.getItem('espanol_v3');
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    userName       = s.userName       || '';
-    dailyMinutes   = s.dailyMinutes   || 20;
-    selectedTopics = s.selectedTopics || [];
-    customWords    = s.customWords    || [];
-    xp             = s.xp             || 0;
-    streak         = s.streak         || 1;
-    quizCorrect    = s.quizCorrect    || 0;
-    quizTotal      = s.quizTotal      || 0;
-    learnedSet     = new Set(s.learnedSet || []);
-    perfData       = s.perfData       || perfData;
-
-    if (userName) document.getElementById('setup-name').value = userName;
-    document.querySelectorAll('.topic-chip').forEach(c => {
-      c.classList.toggle('sel', selectedTopics.includes(c.dataset.topic));
-    });
-    document.querySelectorAll('.time-opt').forEach(o => {
-      o.classList.toggle('sel', parseInt(o.dataset.mins) === dailyMinutes);
-    });
-    renderVocabTags();
-
-    if (userName && selectedTopics.length) {
-      buildActiveVocab();
-      buildDailyPlan();
-      renderPlan();
-      goPage('plan');
-    }
+    if (raw) localData = JSON.parse(raw);
   } catch (e) {}
+
+  // Apply local data right away so the app feels instant
+  if (localData && !localData.reset && localData.userName) {
+    applyProgressObject(localData);
+    applyUIFromState();
+    setSyncStatus('saved');
+  }
+
+  // Then check the cloud for a newer save (e.g. progress from another device)
+  const cloudData = await cloudLoad();
+
+  if (cloudData && !cloudData.reset) {
+    const localTime = localData?.savedAt ? new Date(localData.savedAt) : new Date(0);
+    const cloudTime = cloudData.savedAt  ? new Date(cloudData.savedAt)  : new Date(0);
+
+    if (cloudTime > localTime) {
+      // Cloud is newer — use it and update localStorage
+      applyProgressObject(cloudData);
+      try { localStorage.setItem('espanol_v3', JSON.stringify(cloudData)); } catch (e) {}
+      applyUIFromState();
+      setSyncStatus('saved');
+    }
+  }
+
+  setSyncStatus('');
+
+  // Navigate to plan if we have a saved setup, otherwise stay on setup page
+  if (userName && selectedTopics.length) {
+    buildActiveVocab();
+    buildDailyPlan();
+    renderPlan();
+    goPage('plan');
+  }
+}
+
+function applyUIFromState() {
+  if (userName) document.getElementById('setup-name').value = userName;
+  document.querySelectorAll('.topic-chip').forEach(c => {
+    c.classList.toggle('sel', selectedTopics.includes(c.dataset.topic));
+  });
+  document.querySelectorAll('.time-opt').forEach(o => {
+    o.classList.toggle('sel', parseInt(o.dataset.mins) === dailyMinutes);
+  });
+  renderVocabTags();
 }
 
 // ============================================================
