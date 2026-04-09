@@ -377,33 +377,56 @@ async function fetchAISpeakBatch() {
 
 // ---- Coaching AI calls ----
 async function aiExpandVocab() {
+  const statusEl = document.getElementById('ai-expand-status');
+  const btn      = document.getElementById('expand-btn');
+
   if (!customWords.length) {
-    document.getElementById('ai-expand-status').textContent = 'Add some words first, then I can expand on them!';
+    statusEl.textContent = 'Add some words first, then I can expand on them!';
     return;
   }
-  const btn = document.getElementById('expand-btn');
+
   btn.classList.add('loading');
   btn.innerHTML = '<span>⏳</span> Expanding…';
-  document.getElementById('ai-expand-status').textContent = 'AI is finding related vocabulary…';
+  statusEl.textContent = 'AI is finding related vocabulary…';
 
   const sample = customWords.slice(0, 10).map(w => w.es + ' = ' + w.en).join('\n');
-  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with valid JSON array. No markdown, no code fences.';
-  const prompt = 'A student entered these Spanish words:\n' + sample +
-    '\n\nIdentify the theme and generate 8 RELATED words they have NOT entered. Return JSON array:\n' +
+  const system = 'You are a Spanish teacher for 8th grade. Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences, no extra text — just the raw JSON array.';
+  const prompt = 'A student entered these Spanish vocabulary words:\n' + sample +
+    '\n\nIdentify the topic/theme of these words and generate 8 NEW related Spanish vocabulary words that the student has NOT already entered. ' +
+    'Return ONLY a JSON array with no other text:\n' +
     '[{"es":"la camisa","en":"shirt","cat":"Clothing","pron":"lah kah-MEE-sah","ex":"La camisa es azul."}]';
+
   try {
-    const text = await workerCall(system, prompt, 900);
-    const words = parseJSON(text);
-    if (Array.isArray(words)) {
-      const added = words.filter(w => w.es && w.en);
-      customWords.push(...added);
-      renderVocabTags();
-      document.getElementById('ai-expand-status').textContent = '✨ AI added ' + added.length + ' related words!';
-      saveState();
-    }
+    const text = await workerCall(system, prompt, 1000);
+
+    // Strip any accidental markdown fences or leading/trailing whitespace
+    const clean = text.replace(/```json|```/g, '').trim();
+
+    // Find the JSON array even if there's stray text around it
+    const match = clean.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('AI did not return a JSON array. Response: ' + clean.slice(0, 100));
+
+    const words = JSON.parse(match[0]);
+    if (!Array.isArray(words)) throw new Error('Parsed result is not an array.');
+
+    const added = words.filter(w => w.es && w.en);
+    if (added.length === 0) throw new Error('AI returned an array but no valid word objects.');
+
+    // Avoid adding duplicates
+    const existing = new Set(customWords.map(w => w.es.toLowerCase().trim()));
+    const fresh = added.filter(w => !existing.has(w.es.toLowerCase().trim()));
+
+    customWords.push(...fresh);
+    renderVocabTags();
+    statusEl.textContent = '✨ AI added ' + fresh.length + ' related words!';
+    saveState();
+
   } catch (e) {
-    document.getElementById('ai-expand-status').textContent = 'Could not reach AI. Check your Worker URL.';
+    console.error('aiExpandVocab error:', e);
+    statusEl.textContent = '⚠ Error: ' + e.message + '. Please try again.';
   }
+
+  // Always reset the button whether we succeeded or failed
   btn.classList.remove('loading');
   btn.innerHTML = '<span>✨</span> AI: Expand These Topics';
 }
