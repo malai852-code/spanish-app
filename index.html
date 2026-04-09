@@ -186,12 +186,24 @@
           </div>
         </div>
 
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-          <button class="btn audio" onclick="speakCurrent()" style="font-size:13px;">🔊 Hear word &amp; sentence</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <button class="btn audio" onclick="speakCurrent()" id="fc-speak-btn" style="font-size:13px;">🔊 Hear word &amp; sentence</button>
+          <div class="speed-wrap">
+            Speed:
+            <input type="range" id="fc-spd" min="0.5" max="1.2" step="0.1" value="0.9"
+                   oninput="document.getElementById('fc-spd-val').textContent=this.value+'x'">
+            <span id="fc-spd-val">0.9x</span>
+          </div>
         </div>
 
         <div class="fc-mc-opts" id="fc-mc-opts"></div>
         <div id="fc-fb"></div>
+
+        <!-- Next button — hidden until an answer is chosen -->
+        <button class="btn primary" id="fc-next-btn" onclick="fcNextCard()"
+          style="display:none;width:100%;margin-top:10px;font-size:15px;">
+          Next Card →
+        </button>
       </div>
 
       <!-- QUIZ -->

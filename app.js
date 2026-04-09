@@ -784,6 +784,11 @@ function loadCard() {
   fcFlipped = false;
   card._item = item;
 
+  // Hide Next button and clear feedback until an answer is chosen
+  const nextBtn = document.getElementById('fc-next-btn');
+  if (nextBtn) nextBtn.style.display = 'none';
+  document.getElementById('fc-fb').innerHTML = '';
+
   // Fill front face — no category label
   document.getElementById('fc-es').textContent   = item.es;
   document.getElementById('fc-pron').textContent = item.pron || '';
@@ -817,12 +822,12 @@ function loadCard() {
 }
 
 function answerCard(btn, chosen, correct, item) {
-  // Disable all buttons immediately
+  // Disable all answer buttons immediately
   document.querySelectorAll('.fc-mc-btn').forEach(b => b.classList.add('disabled'));
 
   const isCorrect = chosen === correct;
 
-  // Mark chosen and reveal correct
+  // Highlight chosen and reveal correct
   btn.classList.add(isCorrect ? 'correct' : 'wrong');
   if (!isCorrect) {
     document.querySelectorAll('.fc-mc-btn').forEach(b => {
@@ -830,11 +835,11 @@ function answerCard(btn, chosen, correct, item) {
     });
   }
 
-  // Flip the card over to show the full answer + example sentence
+  // Flip the card after a short pause so she sees the answer highlight first
   setTimeout(() => {
     document.getElementById('flashcard').classList.add('flipped');
     fcFlipped = true;
-  }, 200);
+  }, 300);
 
   // Record performance and award XP
   recordVocabPerf(item.cat, isCorrect);
@@ -848,22 +853,29 @@ function answerCard(btn, chosen, correct, item) {
     showFB('fc-fb', 'The answer is: <strong>' + correct + '</strong> — keep practicing! +5 XP 💪', 'bad');
   }
 
-  // Auto-advance to next card after 2.2 seconds
-  setTimeout(() => {
-    fcIdx++;
-    loadCard();
-  }, 2200);
+  // Auto-play the word + sentence so she hears it right away
+  setTimeout(() => speakCurrent(), 500);
+
+  // Show the Next Card button — she advances when she's ready
+  document.getElementById('fc-next-btn').style.display = 'block';
 }
 
-// 🔊 Speaks the Spanish word, pauses briefly, then speaks the example sentence
+function fcNextCard() {
+  document.getElementById('fc-next-btn').style.display = 'none';
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  fcIdx++;
+  loadCard();
+}
+
+// 🔊 Speaks the Spanish word then the example sentence using the speed slider
 function speakCurrent() {
   const item = document.getElementById('flashcard')._item;
   if (!item) return;
-  speakTTS(item.es, 'es-ES', 0.9);
+  const rate = parseFloat(document.getElementById('fc-spd').value) || 0.9;
+  speakTTS(item.es, 'es-ES', rate);
   if (item.ex) {
-    // Queue the sentence after the word finishes (~1.5s per short word)
-    const wordDelay = Math.max(1200, item.es.length * 80);
-    setTimeout(() => speakTTS(item.ex, 'es-ES', 0.85), wordDelay);
+    const wordDelay = Math.max(1400, item.es.length * 90);
+    setTimeout(() => speakTTS(item.ex, 'es-ES', rate), wordDelay);
   }
 }
 
