@@ -170,7 +170,15 @@ function saveState() {
 }
 
 function resetApp() {
-  if (!confirm('Are you sure you want to clear ALL progress?\n\nThis will erase your XP, streak, quiz scores, learned words, custom vocabulary, and performance data. This cannot be undone.')) return;
+  // confirm() is blocked in sandboxed iframes (GitHub Pages etc.)
+  // Use inline confirmation instead
+  const card = document.getElementById('reset-confirm-card');
+  if (card) card.style.display = 'block';
+}
+
+function resetAppConfirmed() {
+  const card = document.getElementById('reset-confirm-card');
+  if (card) card.style.display = 'none';
 
   // Clear localStorage
   try { localStorage.removeItem('espanol_v3'); } catch (e) {}
@@ -199,8 +207,12 @@ function resetApp() {
   document.getElementById('ai-expand-status').textContent = '';
   document.getElementById('custom-vocab-input').value = '';
 
-  // Go back to setup
   goPage('setup');
+}
+
+function resetAppCancel() {
+  const card = document.getElementById('reset-confirm-card');
+  if (card) card.style.display = 'none';
 }
 
 function loadSavedState() {
