@@ -9,7 +9,7 @@ const WORKER_URL = 'https://spanish-app-proxy.marshall-lai.workers.dev';
 // Must match the SAVE_TOKEN secret set in your Cloudflare Worker
 // Change this to any private string you choose — set the same value
 // as a Worker secret: wrangler secret put SAVE_TOKEN
-const SAVE_TOKEN = 'espanol-secret-42';
+const SAVE_TOKEN = 'espanol-secret-123';
 
 // ============================================================
 // ACCENT BAR
