@@ -99,10 +99,33 @@ function insertIntoFocusedConj(ch) {
 // ============================================================
 // INIT — runs as soon as the DOM is ready
 // ============================================================
+let cloudPollInterval = null;
+
 document.addEventListener('DOMContentLoaded', () => {
   buildAccentBar('setup-accent-bar', 'custom-vocab-input');
   loadSavedState();
 });
+
+// Poll the cloud every 30s when the plan page is visible.
+// This means an open tab on Chrome will detect a reset done on another device
+// without needing a manual refresh.
+function startCloudPoll() {
+  stopCloudPoll(); // clear any existing interval first
+  cloudPollInterval = setInterval(async () => {
+    // Only poll when the plan page is active and the tab is visible
+    const planActive = document.getElementById('page-plan')?.classList.contains('active');
+    if (!planActive || document.hidden) return;
+    const cloudData = await cloudLoad();
+    if (cloudData && cloudData.reset) {
+      try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+      location.reload();
+    }
+  }, 30000); // every 30 seconds
+}
+
+function stopCloudPoll() {
+  if (cloudPollInterval) { clearInterval(cloudPollInterval); cloudPollInterval = null; }
+}
 
 // ============================================================
 // STATE
@@ -241,26 +264,36 @@ function resetApp() {
 async function resetAppConfirmed() {
   const card = document.getElementById('reset-confirm-card');
   if (card) card.style.display = 'none';
-
-  // Show resetting status
   setSyncStatus('saving');
 
-  // Wipe localStorage first
+  // Wipe localStorage immediately
   try { localStorage.removeItem('espanol_v3'); } catch (e) {}
 
-  // Write reset flag to cloud and WAIT for it to complete before reloading
-  // This ensures other devices will see the reset flag when they next load
+  const resetPayload = JSON.stringify({
+    token: SAVE_TOKEN,
+    progress: { reset: true, savedAt: new Date().toISOString() },
+  });
+
+  // Primary: await fetch so we know it completed
+  let cloudOk = false;
   try {
-    await fetch(WORKER_URL + '/api/save', {
+    const resp = await fetch(WORKER_URL + '/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: SAVE_TOKEN,
-        progress: { reset: true, savedAt: new Date().toISOString() },
-      }),
+      body: resetPayload,
     });
-  } catch (e) {
-    // Even if cloud save fails, still reload so this device resets
+    cloudOk = resp.ok;
+  } catch (e) {}
+
+  // Backup: sendBeacon fires even if the page is closing (Safari-safe)
+  // This runs in parallel as a belt-and-suspenders guarantee
+  if (!cloudOk && navigator.sendBeacon) {
+    try {
+      const blob = new Blob([resetPayload], { type: 'application/json' });
+      navigator.sendBeacon(WORKER_URL + '/api/save', blob);
+      // Give sendBeacon a moment to fire before we reload
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {}
   }
 
   location.reload();
@@ -296,8 +329,8 @@ async function loadSavedState() {
     // If the cloud has a reset flag, this device needs to wipe and start fresh too
     if (cloudData.reset) {
       try { localStorage.removeItem('espanol_v3'); } catch (e) {}
-      // Stay on setup page with clean state — no reload needed, state vars are already at defaults
-      setSyncStatus('');
+      // Full reload gives us a guaranteed clean JS state — no stale variables
+      location.reload();
       return;
     }
 
@@ -693,6 +726,9 @@ function renderPlan() {
   fetchAIQuizBatch();
   fetchAIListenBatch();
   fetchAISpeakBatch();
+
+  // Start polling cloud for resets from other devices
+  startCloudPoll();
 }
 
 function renderPlanGrid() {
@@ -744,10 +780,12 @@ function goBack() {
   document.getElementById('ai-panel').style.display = 'none';
   renderPlanGrid();
   updateStats();
+  startCloudPoll(); // resume polling now we're back on the plan page
   goPage('plan');
 }
 
 function startActivity(id) {
+  stopCloudPoll(); // no need to poll while doing an activity
   currentActivity = id;
   const act = planActivities.find(a => a.id === id);
   document.getElementById('act-title').textContent = act.icon + ' ' + act.label;
