@@ -118,6 +118,17 @@ function startCloudPoll() {
     const cloudData = await cloudLoad();
     if (cloudData && cloudData.reset) {
       try { localStorage.removeItem('espanol_v3'); } catch (e) {}
+      // Clear the reset flag before reloading so we don't loop
+      try {
+        await fetch(WORKER_URL + '/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: SAVE_TOKEN,
+            progress: { reset: false, cleared: true, savedAt: new Date().toISOString() },
+          }),
+        });
+      } catch (e) {}
       location.reload();
     }
   }, 30000); // every 30 seconds
@@ -329,7 +340,18 @@ async function loadSavedState() {
     // If the cloud has a reset flag, this device needs to wipe and start fresh too
     if (cloudData.reset) {
       try { localStorage.removeItem('espanol_v3'); } catch (e) {}
-      // Full reload gives us a guaranteed clean JS state — no stale variables
+      // IMPORTANT: Clear the reset flag from the cloud immediately, otherwise
+      // every reload will see it and loop forever
+      try {
+        await fetch(WORKER_URL + '/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: SAVE_TOKEN,
+            progress: { reset: false, cleared: true, savedAt: new Date().toISOString() },
+          }),
+        });
+      } catch (e) {}
       location.reload();
       return;
     }
